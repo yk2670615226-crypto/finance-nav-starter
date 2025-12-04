@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
@@ -7,19 +9,13 @@ from models import Record
 
 
 class CategoryPredictor:
-    """
-    记账分类预测器：
-    - 优先使用基于历史记录训练的朴素贝叶斯模型
-    - 当样本不足或模型不可用时，退回到简单关键字规则
-    """
+    """记账分类预测器，优先模型预测，失败时使用规则兜底。"""
 
     def __init__(self) -> None:
-        # 朴素贝叶斯文本分类器
         self.vectorizer = CountVectorizer(token_pattern=r"(?u)\b\w+\b")
         self.clf = MultinomialNB()
         self.is_trained: bool = False
 
-        # 关键字规则（兜底逻辑）
         self.rules: dict[str, str] = {
             "饭": "餐饮",
             "餐": "餐饮",
@@ -41,15 +37,9 @@ class CategoryPredictor:
             "游": "娱乐",
         }
 
-    def train(self, db_session: Session, _user_id=None) -> None:
-        """
-        使用历史支出记录训练分类模型。
+    def train(self, db_session: Session, _user_id: Optional[int] = None) -> None:
+        """使用历史支出记录训练分类模型。"""
 
-        说明：
-        - 单用户模式，不使用 user_id，仅保留参数以兼容现有调用。
-        - 只使用有备注的支出记录（type='expense' 且 note 非空）。
-        - 样本少于 3 条时不训练模型，仅使用规则兜底。
-        """
         records = (
             db_session.query(Record.note, Record.category)
             .filter(
@@ -66,12 +56,11 @@ class CategoryPredictor:
 
         df = pd.DataFrame(records, columns=["note", "category"])
         try:
-            X = self.vectorizer.fit_transform(df["note"])
-            y = df["category"]
-            self.clf.fit(X, y)
+            features = self.vectorizer.fit_transform(df["note"])
+            labels = df["category"]
+            self.clf.fit(features, labels)
             self.is_trained = True
         except Exception:
-            # 出现异常时关闭模型使用，退回规则模式
             self.is_trained = False
 
     def predict(self, note: str) -> str:
