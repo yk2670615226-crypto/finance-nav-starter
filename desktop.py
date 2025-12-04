@@ -1,13 +1,13 @@
+import socket
 import sys
 import threading
 import time
-import socket
 import urllib.request
 from typing import Optional
 
 import webview
 
-from app import socketio, app
+from app import app, socketio
 
 HOST = "127.0.0.1"
 
