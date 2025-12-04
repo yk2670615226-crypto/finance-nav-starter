@@ -1,0 +1,460 @@
+{% extends "layout.html" %}
+{% block content %}
+  
+  {% if is_demo %}
+  <div class="alert alert-primary d-flex align-items-center justify-content-between mb-4 shadow-sm border-0 bg-primary bg-opacity-10 text-primary animate__animated animate__fadeInDown">
+      <div>
+        <i class="bi bi-lightning-charge-fill me-2"></i>
+        <strong>超级演示模式</strong>
+        已生成约 10000 条数据，覆盖近十年收支。
+      </div>
+      <button type="button" class="btn btn-sm btn-primary rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#exitDemoModal">
+        退出演示模式
+      </button>
+  </div>
+
+  <!-- 退出演示模式确认弹窗（文案改为“是否退出演示模式” / “是 / 否”） -->
+  <div class="modal fade" id="exitDemoModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow rounded-4">
+        <div class="modal-body p-4 text-center">
+          <h5 class="fw-bold mb-3">是否退出演示模式？</h5>
+          <p class="text-muted mb-4">
+            退出后将清空当前演示数据，回到空账本。
+          </p>
+          <div class="d-flex justify-content-center gap-2 mt-2">
+            <button
+              type="button"
+              class="btn btn-light px-4"
+              data-bs-dismiss="modal"
+            >
+              否
+            </button>
+            <form method="post" action="{{ url_for('exit_demo') }}">
+              <button type="submit" class="btn btn-primary px-4">
+                是
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row justify-content-center mb-4" data-aos="fade-up">
+    <div class="col-12 col-xl-10">
+      <div class="card shadow-sm border-0 bg-white rounded-4 overflow-hidden">
+        <div class="card-body p-4">
+          <div class="d-flex align-items-center mb-3">
+              <div class="bg-primary bg-opacity-10 text-primary rounded-circle p-2 me-2"><i class="bi bi-pen-fill"></i></div>
+              <h5 class="card-title fw-bold mb-0 text-dark">记一笔</h5>
+              <div class="ms-auto text-muted small"><i class="bi bi-keyboard"></i> 快捷键: Ctrl+Enter 保存</div>
+          </div>
+          
+          <form method="post" action="{{ url_for('records_new') }}" id="recordForm" class="row g-3 align-items-end">
+            <input type="hidden" name="category" id="manualCategoryInput">
+            <div class="col-3 col-md-2">
+              <select name="type" class="form-select bg-light border-0 fw-bold text-center py-2" required>
+                <option value="expense">支出</option>
+                <option value="income">收入</option>
+              </select>
+            </div>
+            <div class="col-9 col-md-3">
+              <div class="input-group">
+                <span class="input-group-text bg-light border-0 text-muted">¥</span>
+                <input type="number" step="0.01" min="0" name="amount" class="form-control bg-light border-0 fw-bold py-2" placeholder="0.00" required>
+              </div>
+            </div>
+            <div class="col-12 col-md-5">
+              <div class="position-relative">
+                <input type="text" name="note" id="noteInput" class="form-control bg-light border-0 ps-5 py-2" placeholder="备注 (如: 午饭 30，AI自动分类)">
+                <i class="bi bi-magic position-absolute top-50 start-0 translate-middle-y ms-3 text-muted"></i>
+              </div>
+            </div>
+            <div class="col-12 col-md-2">
+              <button class="btn btn-primary w-100 fw-bold py-2 shadow-sm" type="button" onclick="handleSave()">保存</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4 justify-content-center">
+    <div class="col-12 col-md-5 col-xl-4" data-aos="fade-right" data-aos-delay="100">
+      <div class="card h-100 card-hover shadow-sm border-0 rounded-4">
+        <div class="card-header bg-white border-0 pt-4 pb-0 d-flex justify-content-between align-items-center">
+            <h6 class="fw-bold mb-0 text-secondary" id="summaryTitle">本月概况</h6>
+            <div class="d-flex align-items-center bg-light rounded-pill p-1">
+                <button class="btn btn-sm btn-light rounded-circle border-0" onclick="changeMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+                <span class="mx-2 small fw-bold user-select-none" id="currentMonthDisplay">...</span>
+                <button class="btn btn-sm btn-light rounded-circle border-0" onclick="changeMonth(1)"><i class="bi bi-chevron-right"></i></button>
+            </div>
+        </div>
+        
+        <div class="card-body text-center d-flex flex-column align-items-center">
+            <div class="py-2 w-100">
+                <small class="text-muted text-uppercase fw-bold ls-1">总支出</small>
+                <h2 class="display-5 fw-bold text-dark mt-1 mb-2" id="sum-spent">--</h2>
+                <span class="badge bg-light text-dark border rounded-pill px-3">
+                    预算: <span id="sum-budget">--</span>
+                </span>
+                <div class="mt-2" id="sum-status" onclick="quickSetBudget()"></div>
+                
+                <div class="mt-4">
+                    <a href="{{ url_for('records_page') }}" class="btn btn-sm btn-outline-primary rounded-pill px-4 fw-bold border-2 hover-shadow">
+                        <i class="bi bi-receipt-cutoff me-1"></i> 收支明细
+                    </a>
+                </div>
+            </div>
+            
+            <div id="pie" style="height:180px; width:100%;" class="mt-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-7 col-xl-6" data-aos="fade-left" data-aos-delay="200">
+        <div class="card h-100 card-hover shadow-sm border-0 rounded-4">
+            <div class="card-header bg-white border-0 pt-4 pb-0 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0 text-primary"><i class="bi bi-graph-up me-2"></i>支出趋势</h6>
+                <div class="btn-group btn-group-sm bg-light rounded-pill p-1" role="group">
+                    <input type="radio" class="btn-check" name="trendMode" id="modeMonth" autocomplete="off" checked onchange="refreshAllCharts()">
+                    <label class="btn btn-sm rounded-pill border-0 fw-bold px-3 transition-btn" for="modeMonth">按天</label>
+                    <input type="radio" class="btn-check" name="trendMode" id="modeYear" autocomplete="off" onchange="refreshAllCharts()">
+                    <label class="btn btn-sm rounded-pill border-0 fw-bold px-3 transition-btn" for="modeYear">按月</label>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="trendChart" style="height:300px; width:100%;"></div>
+            </div>
+        </div>
+    </div>
+  </div>
+
+  <div class="row justify-content-center" data-aos="fade-up" data-aos-delay="300">
+      <div class="col-12 col-xl-10">
+          <div class="card shadow-sm border-0 rounded-4">
+              <div class="card-header bg-white border-0 pt-4 pb-2 d-flex justify-content-between align-items-center">
+                  <h6 class="fw-bold mb-0 text-dark"><i class="bi bi-clock-history me-2"></i>最近记录</h6>
+              </div>
+              <div class="card-body p-0">
+                  <div class="table-responsive">
+                      <table class="table table-hover align-middle mb-0">
+                          <thead class="bg-light text-muted small text-uppercase">
+                            <tr>
+                              <th class="ps-4">时间</th>
+                              <th>类别</th>
+                              <th>备注</th>
+                              <th class="text-end pe-4">金额</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                              {% for r in recent_records %}
+                              <tr>
+                                  <td class="ps-4 text-muted small">{{ r.ts.strftime("%m-%d %H:%M") }}</td>
+                                  <td><span class="badge bg-white text-dark border fw-normal">{{ r.category }}</span></td>
+                                  <td>
+                                    {{ r.note }}
+                                    {% if r.type == 'income' %}
+                                      <span class="badge bg-success-subtle text-success ms-2" style="font-size: 0.7em;">收入</span>
+                                    {% endif %}
+                                  </td>
+                                  <td class="text-end pe-4 fw-bold {{ 'text-success' if r.type == 'income' else 'text-dark' }}">
+                                    {{ "+" if r.type == 'income' else "-" }} {{ "%.2f"|format(r.amount) }}
+                                  </td>
+                              </tr>
+                              {% else %}
+                              <tr>
+                                <td colspan="4" class="text-center py-4 text-muted">暂无记录，快去记一笔吧！</td>
+                              </tr>
+                              {% endfor %}
+                          </tbody>
+                      </table>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+
+  <div class="modal fade" id="categoryConfirmModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content rounded-4 border-0 shadow">
+        <div class="modal-header border-0">
+          <h5 class="modal-title fw-bold">🤖 这是一个新词</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body pt-0">
+          <p class="text-muted mb-3">AI 还不认识这个备注，请帮它归类：</p>
+          <input type="text" list="cat_suggestions" id="confirm_category_input" class="form-control form-control-lg bg-light border-0" placeholder="例如: 餐饮...">
+          <datalist id="cat_suggestions">
+            {% for cat in existing_categories %}
+              <option value="{{ cat }}">
+            {% endfor %}
+              <option value="餐饮">
+              <option value="交通">
+          </datalist>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-primary w-100 rounded-pill" onclick="confirmAndSubmit()">确认并学习</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="setBudgetModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content border-0 shadow rounded-4">
+        <div class="modal-header border-0 pb-0">
+          <h6 class="modal-title fw-bold">💰 设置月度预算</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="input-group mb-3">
+            <span class="input-group-text bg-light border-0">¥</span>
+            <input type="number" id="quickBudgetInput" class="form-control bg-light border-0 fw-bold" placeholder="0.00">
+          </div>
+          <button type="button" class="btn btn-primary w-100 rounded-pill" onclick="submitQuickBudget()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if is_demo %}
+  <div class="modal fade" id="demoWelcomeModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-body text-center p-5">
+          <i class="bi bi-stars text-warning display-1 mb-3"></i>
+          <h3 class="fw-bold mb-3">欢迎体验</h3>
+          <p class="text-muted mb-4">
+            为了方便您测试，系统已自动生成了覆盖近十年的高仿真演示账单。
+            您可以随意操作，体验在<strong>大数据量</strong>下的分页和图表性能。
+          </p>
+          <button type="button" class="btn btn-primary px-5 rounded-pill" data-bs-dismiss="modal">
+            开始探索
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <style>
+      .btn-check:checked + .btn { background-color: white; color: var(--bs-primary); box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+      .transition-btn { transition: all 0.2s ease; }
+      #sum-status { transition: transform 0.2s ease; }
+      #sum-status:hover { transform: scale(1.05); }
+      .hover-shadow:hover { box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15) !important; transform: translateY(-1px); }
+  </style>
+
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script>
+    let currentDate = new Date();
+
+    function formatDateForApi(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      return `${y}-${m}`;
+    }
+
+    function updateDateDisplay() {
+      const y = currentDate.getFullYear();
+      const m = currentDate.getMonth() + 1;
+      document.getElementById('currentMonthDisplay').textContent = `${y}年${m}月`;
+      document.getElementById('summaryTitle').textContent = `${m}月概况`;
+    }
+
+    function changeMonth(delta) {
+      currentDate.setMonth(currentDate.getMonth() + delta);
+      updateDateDisplay();
+      refreshAllCharts();
+    }
+
+    function refreshAllCharts() {
+      const dateStr = formatDateForApi(currentDate);
+      const mode = document.getElementById('modeYear').checked ? 'year' : 'month';
+      loadSummary(dateStr);
+      loadPie(dateStr);
+      loadTrend(dateStr, mode);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        updateDateDisplay();
+        refreshAllCharts();
+
+        const socket = io();
+        socket.on("update_pie", () => {
+          refreshAllCharts();
+        });
+
+        document.addEventListener('keydown', function(e) {
+          if (e.ctrlKey && e.key === 'n') {
+            e.preventDefault();
+            document.getElementById('noteInput').focus();
+          }
+          if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            handleSave();
+          }
+        });
+
+        const demoModalEl = document.getElementById('demoWelcomeModal');
+        if (demoModalEl && !sessionStorage.getItem('demoShown')) {
+          new bootstrap.Modal(demoModalEl).show();
+          sessionStorage.setItem('demoShown', 'true');
+        }
+    });
+
+    async function handleSave() {
+      const form = document.getElementById('recordForm');
+      const note = document.getElementById('noteInput').value;
+      const type = form.querySelector('select[name="type"]').value;
+
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+
+      if (type === 'income' || !note.trim()) {
+        form.submit();
+        return;
+      }
+
+      try {
+        const res = await fetch("{{ url_for('api_predict') }}", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({note: note})
+        });
+        const data = await res.json();
+
+        if (data.category === "其他") {
+          new bootstrap.Modal(document.getElementById('categoryConfirmModal')).show();
+        } else {
+          form.submit();
+        }
+      } catch(e) {
+        form.submit();
+      }
+    }
+
+    function confirmAndSubmit() {
+      document.getElementById('manualCategoryInput').value = document.getElementById('confirm_category_input').value;
+      document.getElementById('recordForm').submit();
+    }
+
+    function quickSetBudget() {
+      new bootstrap.Modal(document.getElementById('setBudgetModal')).show();
+    }
+
+    async function submitQuickBudget() {
+        const val = document.getElementById('quickBudgetInput').value;
+        if (!val) return;
+        try {
+          const res = await fetch("{{ url_for('api_update_budget') }}", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({budget: val})
+          });
+          const data = await res.json();
+          if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('setBudgetModal')).hide();
+            refreshAllCharts();
+          }
+        } catch(e) {
+          alert("设置失败");
+        }
+    }
+
+    async function loadSummary(dateStr) { 
+        const res = await fetch(`{{ url_for('api_summary') }}?date=${dateStr}&t=${Date.now()}`); 
+        const data = await res.json(); 
+        document.getElementById('sum-spent').textContent = "¥" + data.display_spent; 
+        document.getElementById('sum-budget').textContent = "¥" + data.display_budget; 
+        const statusEl = document.getElementById('sum-status');
+        statusEl.innerHTML = `<span class="${data.status_class} px-3 py-2 rounded-pill shadow-sm cursor-pointer user-select-none">${data.status_text}</span>`;
+        statusEl.style.cursor = data.status_text.includes("未设") ? "pointer" : "default";
+    }
+    
+    async function loadPie(dateStr) {
+      const el = document.getElementById('pie');
+      if(!el) return;
+      const res = await fetch(`{{ url_for('api_stats_category') }}?date=${dateStr}&t=${Date.now()}`);
+      const data = await res.json();
+      const chart = echarts.init(el);
+      chart.setOption({
+        tooltip:{trigger:'item'},
+        series:[{
+          type:'pie',
+          radius:['50%', '80%'],
+          avoidLabelOverlap:false,
+          itemStyle: {
+            borderRadius: 5,
+            borderColor: '#fff',
+            borderWidth: 2
+          },
+          label:{show:false},
+          data: data.length ? data : [{value:1, name:'无数据', itemStyle:{color:'#eee'}}]
+        }]
+      });
+    }
+
+    let trendChartInstance = null;
+
+    async function loadTrend(dateStr, mode) {
+      const el = document.getElementById('trendChart');
+      if(!el) return;
+      const res = await fetch(`{{ url_for('api_stats_trend') }}?date=${dateStr}&mode=${mode}&t=${Date.now()}`);
+      const data = await res.json();
+
+      if(trendChartInstance) trendChartInstance.dispose();
+      trendChartInstance = echarts.init(el);
+      const color = mode === 'month' ? '#4e73df' : '#1cc88a';
+
+      trendChartInstance.setOption({
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(255,255,255,0.9)',
+          borderColor: '#eee',
+          textStyle: {color:'#333'}
+        },
+        grid: {
+          top: '10%',
+          left: '2%',
+          right: '3%',
+          bottom: '3%',
+          containLabel: true
+        },
+        xAxis: {
+          type: 'category',
+          boundaryGap: false,
+          data: data.labels,
+          axisLine:{show:false},
+          axisTick:{show:false}
+        },
+        yAxis: {
+          type: 'value',
+          splitLine:{lineStyle:{type:'dashed', color:'#f0f0f0'}}
+        },
+        series: [{
+          name: '支出',
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          itemStyle: {color: color},
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0,0,0,1, [
+              {offset:0, color:color},
+              {offset:1, color:'rgba(255,255,255,0)'}
+            ])
+          },
+          data: data.values
+        }]
+      });
+
+      window.addEventListener('resize', () => trendChartInstance.resize());
+    }
+  </script>
+{% endblock %}

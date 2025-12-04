@@ -1,0 +1,203 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    
+    <!-- 顶部标题 + 关闭按钮 -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h4 class="fw-bold mb-0 text-dark">设置</h4>
+      <a href="{{ url_for('index') }}" class="btn btn-light rounded-pill px-3 shadow-sm text-secondary">
+        <i class="bi bi-x-lg"></i>
+      </a>
+    </div>
+
+    <!-- 全局提示（flash messages） -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} mb-4 border-0 shadow-sm rounded-3 d-flex align-items-center">
+            <i class="bi bi-info-circle-fill me-2"></i> {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- 设置卡片：应用锁 + 演示模式 -->
+    <div class="card shadow-sm border-0 mb-4 overflow-hidden rounded-4">
+      <div class="list-group list-group-flush">
+        
+        <!-- 应用启动锁 -->
+        <div class="list-group-item p-4 d-flex justify-content-between align-items-center">
+          <div class="d-flex align-items-center">
+            <div
+              class="icon-box bg-success bg-opacity-10 text-success rounded-3 me-3 d-flex align-items-center justify-content-center"
+              style="width: 40px; height: 40px;"
+            >
+              <i class="bi bi-shield-lock fs-5"></i>
+            </div>
+            <div>
+              <h6 class="mb-0 fw-bold">应用启动锁</h6>
+              <small class="text-muted">启动时需密码验证</small>
+            </div>
+          </div>
+          <div class="form-check form-switch">
+            <input
+              class="form-check-input"
+              type="checkbox"
+              id="lockSwitch"
+              style="width: 3em; height: 1.5em; cursor: pointer;"
+              {{ 'checked' if config.enable_lock else '' }}
+            >
+          </div>
+        </div>
+
+        <!-- 演示模式 -->
+        <div class="list-group-item p-4 d-flex justify-content-between align-items-center border-top">
+          <div class="d-flex align-items-center">
+            <div
+              class="icon-box bg-warning bg-opacity-10 text-warning rounded-3 me-3 d-flex align-items-center justify-content-center"
+              style="width: 40px; height: 40px;"
+            >
+              <i class="bi bi-database-fill fs-5"></i>
+            </div>
+            <div>
+              <h6 class="mb-0 fw-bold">演示模式</h6>
+              <small class="text-muted d-block">
+                生成约 10000 条覆盖过去 10 年的随机账单
+              </small>
+            </div>
+          </div>
+          <button
+            class="btn btn-outline-primary rounded-pill px-3"
+            onclick="openDemoModal()"
+          >
+            开启演示
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 设置启动锁密码的弹窗 -->
+<div
+  class="modal fade"
+  id="setLockModal"
+  tabindex="-1"
+  data-bs-backdrop="static"
+  data-bs-keyboard="false"
+>
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg rounded-4">
+      <div class="modal-body p-4 text-center">
+        <div class="mb-3 text-primary">
+          <i class="bi bi-lock-fill display-4"></i>
+        </div>
+        <h5 class="fw-bold mb-3">设置启动密码</h5>
+        <form method="post">
+          <input type="hidden" name="action" value="lock_enable">
+          <div class="mb-4">
+            <input
+              type="password"
+              name="password"
+              class="form-control form-control-lg bg-light border-0 text-center"
+              placeholder="请输入密码"
+              required
+              autofocus
+            >
+          </div>
+          <div class="d-flex gap-2">
+            <button
+              type="button"
+              class="btn btn-light flex-fill py-2"
+              data-bs-dismiss="modal"
+              onclick="cancelLockAction()"
+            >
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary flex-fill py-2">
+              确认开启
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 开启演示模式的弹窗 -->
+<div class="modal fade" id="startDemoModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg rounded-4">
+      <div class="modal-body p-4">
+        <div class="text-center mb-3">
+          <i class="bi bi-magic text-warning display-4"></i>
+        </div>
+        <h5 class="text-center fw-bold mb-3">开启超级演示模式？</h5>
+        <p class="text-muted text-center mb-4">
+          系统将自动生成
+          <strong>10000+</strong> 条覆盖过去 <strong>10 年</strong> 的高仿真账单数据。
+        </p>
+        <div class="alert alert-warning small border-0 bg-warning-subtle text-warning-emphasis rounded-3">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>
+          建议仅在空账本下使用，以免混淆真实数据。
+        </div>
+        <div class="d-flex gap-2 mt-4">
+          <button
+            type="button"
+            class="btn btn-light flex-fill"
+            data-bs-dismiss="modal"
+          >
+            取消
+          </button>
+          <a
+            href="{{ url_for('start_demo') }}"
+            class="btn btn-warning text-dark fw-bold flex-fill"
+          >
+            立即生成
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 关闭应用锁的隐藏表单 -->
+<form id="disableLockForm" method="post" style="display:none;">
+  <input type="hidden" name="action" value="lock_disable">
+</form>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const lockSwitch = document.getElementById('lockSwitch');
+    if (lockSwitch) {
+      lockSwitch.addEventListener('change', function() {
+        if (this.checked) {
+          // 开启：弹出设置密码弹窗
+          new bootstrap.Modal(document.getElementById('setLockModal')).show();
+        } else {
+          // 关闭：直接提交隐藏表单
+          document.getElementById('disableLockForm').submit();
+        }
+      });
+    }
+  });
+
+  function cancelLockAction() {
+    const lockSwitch = document.getElementById('lockSwitch');
+    if (lockSwitch) {
+      lockSwitch.checked = false;
+    }
+  }
+
+  function openDemoModal() {
+    new bootstrap.Modal(document.getElementById('startDemoModal')).show();
+  }
+
+  // 挂到 window 上（可选），以防以后改成模块脚本时 onclick 找不到
+  window.openDemoModal = openDemoModal;
+  window.cancelLockAction = cancelLockAction;
+</script>
+{% endblock %}

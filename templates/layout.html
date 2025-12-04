@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    >
+    <title>个人记账系统 Pro</title>
+
+    <!-- 样式依赖：Bootstrap / Icons / AOS -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    >
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    >
+    <link
+      href="https://unpkg.com/aos@2.3.1/dist/aos.css"
+      rel="stylesheet"
+    >
+
+    <style>
+      :root {
+        --bs-body-bg: #f8f9fc;
+        --primary-color: #4e73df;
+        --secondary-color: #858796;
+        --card-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
+      }
+
+      body {
+        background-color: var(--bs-body-bg);
+        font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont,
+          'Helvetica Neue', Arial, sans-serif;
+      }
+
+      /* 导航栏：渐变 + 阴影 */
+      .navbar {
+        background: linear-gradient(90deg, #4e73df 0%, #224abe 100%);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      /* 卡片：圆角 + 轻微悬浮 */
+      .card {
+        border: none;
+        border-radius: 0.75rem;
+        box-shadow: var(--card-shadow);
+        transition: transform 0.2s ease-in-out;
+      }
+
+      .card-hover:hover {
+        transform: translateY(-3px);
+      }
+
+      /* 按钮：统一圆角 */
+      .btn {
+        border-radius: 0.5rem;
+      }
+
+      /* 轻量 fade-in-up 动画（备用） */
+      .fade-in-up {
+        animation: fadeInUp 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- 顶部导航 -->
+    <header class="navbar navbar-expand-lg navbar-dark mb-4 py-3 sticky-top">
+      <div class="container">
+        <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('index') }}">
+          <i class="bi bi-wallet-fill me-2"></i>
+          <span>个人记账系统 Pro</span>
+        </a>
+
+        <div class="ms-auto d-flex gap-2 align-items-center">
+          <!-- 年度统计 -->
+          <a
+            href="{{ url_for('annual_report') }}"
+            class="btn btn-sm btn-light text-primary fw-bold d-flex align-items-center"
+          >
+            <i class="bi bi-file-earmark-bar-graph me-1"></i>
+            <span class="d-none d-sm-inline">年度统计</span>
+          </a>
+
+          <!-- 应用锁：未开启 = unlock，已开启 = lock -->
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-light border-0 d-flex align-items-center"
+            data-bs-toggle="modal"
+            data-bs-target="#lockSettingsModal"
+            title="{{ '应用锁已开启' if config.enable_lock else '设置应用锁' }}"
+          >
+            <i class="bi {{ 'bi-lock-fill' if config.enable_lock else 'bi-unlock' }}"></i>
+            <span class="d-none d-md-inline ms-1">
+              {{ '已加锁' if config.enable_lock else '未加锁' }}
+            </span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container mb-5">
+      {% block content %}{% endblock %}
+    </main>
+
+    <!-- 应用锁设置弹窗：开启 / 修改密码 / 关闭 -->
+    <div class="modal fade" id="lockSettingsModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+          <div class="modal-body p-4">
+            <div class="text-center mb-3">
+              <i class="bi {{ 'bi-lock-fill text-success' if config.enable_lock else 'bi-unlock text-primary' }} display-4"></i>
+            </div>
+            <h5 class="text-center fw-bold mb-3">
+              {{ '应用锁已开启' if config.enable_lock else '开启应用锁' }}
+            </h5>
+            <p class="text-muted text-center mb-4">
+              {% if config.enable_lock %}
+                再次输入新密码可以修改应用锁密码。若不再需要应用锁，可在下方关闭。
+              {% else %}
+                设置启动密码后，每次打开应用时都会先显示锁屏页面，需要输入密码才能进入。
+              {% endif %}
+            </p>
+
+            <!-- 开启 / 修改密码 -->
+            <form method="post" action="{{ url_for('lock_update') }}">
+              <input type="hidden" name="action" value="lock_enable">
+              <div class="mb-3">
+                <input
+                  type="password"
+                  name="password"
+                  class="form-control form-control-lg bg-light border-0 text-center"
+                  placeholder="请输入密码"
+                  required
+                >
+              </div>
+              <button type="submit" class="btn btn-primary w-100 rounded-pill py-2 mb-2">
+                {{ '修改密码' if config.enable_lock else '设置密码并开启' }}
+              </button>
+            </form>
+
+            {% if config.enable_lock %}
+            <!-- 关闭应用锁 -->
+            <form method="post" action="{{ url_for('lock_update') }}">
+              <input type="hidden" name="action" value="lock_disable">
+              <button type="submit" class="btn btn-outline-danger w-100 rounded-pill py-2">
+                关闭应用锁
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JS 依赖：Bootstrap / AOS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script>
+      AOS.init({
+        duration: 800,
+        once: true,
+        easing: 'ease-out-cubic',
+      });
+    </script>
+  </body>
+</html>

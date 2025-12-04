@@ -1,0 +1,213 @@
+{% extends "layout.html" %}
+{% from "macros.html" import card_block %}
+
+{% block content %}
+<style>
+    .big-number {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        letter-spacing: -1px;
+    }
+    .card-hover:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+    }
+    .chart-container {
+        position: relative;
+        height: 200px;
+        width: 100%;
+    }
+</style>
+
+<div class="container py-3" style="max-width: 1100px;">
+
+    {# 固定在左上方的返回按钮（样式在 layout 的 .page-back-btn） #}
+    <a
+        href="{{ url_for('index') }}"
+        class="btn btn-light rounded-circle shadow-sm page-back-btn"
+        aria-label="返回首页"
+    >
+        <i class="bi bi-chevron-left"></i>
+    </a>
+
+    {# 标题区域 #}
+    <div class="text-center mb-4">
+        <div class="fw-bold fs-5">收支统计</div>
+    </div>
+
+    {# 顶部汇总信息 #}
+    <div class="mb-4 text-center">
+        <h1 class="display-3 fw-bold text-dark big-number mb-2">
+            <small class="fs-4 align-top me-1">¥</small>{{ "{:,.2f}".format(total_expense) }}
+        </h1>
+
+        <div class="d-flex justify-content-center gap-2 mb-4">
+            <span class="badge bg-light text-dark border px-3 py-2 rounded-pill">
+                {{ year }} 年总支出
+            </span>
+            <div class="btn-group">
+                <a href="{{ url_for('annual_report', year=year-1) }}" class="btn btn-sm btn-light rounded-pill border-0 me-1">
+                    <i class="bi bi-chevron-left"></i> {{ year-1 }}
+                </a>
+                <a href="{{ url_for('annual_report', year=year+1) }}" class="btn btn-sm btn-light rounded-pill border-0">
+                    {{ year+1 }} <i class="bi bi-chevron-right"></i>
+                </a>
+            </div>
+        </div>
+
+        <div class="row g-2 text-center justify-content-center">
+            <div class="col-4 col-md-3">
+                <small class="text-muted d-block">年度收入</small>
+                <span class="fw-bold">{{ "{:,.2f}".format(total_income) }}</span>
+            </div>
+            <div class="col-4 col-md-3 border-start border-end">
+                <small class="text-muted d-block">财务结余</small>
+                <span class="fw-bold {{ 'text-success' if balance >= 0 else 'text-danger' }}">
+                    {{ "{:,.2f}".format(balance) }}
+                </span>
+            </div>
+            <div class="col-4 col-md-3">
+                <small class="text-muted d-block">最大单笔</small>
+                <span class="fw-bold">{{ "{:,.2f}".format(max_expense_val) }}</span>
+            </div>
+        </div>
+    </div>
+
+    {# 宽屏卡片布局：左边柱状图，右边饼图 #}
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-lg-7">
+            {% call card_block(
+                title='年度趋势',
+                icon_class='bi-bar-chart-fill',
+                title_class='fw-bold mb-0 text-danger',
+                card_classes='border-0 shadow-sm rounded-4 h-100',
+                body_classes='px-2 pb-4'
+            ) %}
+              <div id="yearBarChart"
+                   style="height: 260px;"
+                   data-years='{{ years_list|tojson }}'
+                   data-amounts='{{ amounts_list|tojson }}'
+                   data-current="{{ year }}"></div>
+            {% endcall %}
+        </div>
+
+        <div class="col-12 col-lg-5">
+            {% call card_block(
+                title='支出分布',
+                icon_class='bi-pie-chart-fill',
+                header_right='<small class="text-muted">Top 5</small>',
+                title_class='fw-bold mb-0 text-danger',
+                card_classes='border-0 shadow-sm rounded-4 h-100',
+                body_classes='p-4'
+            ) %}
+              <div class="row align-items-center">
+                  <div class="col-7">
+                      <div class="d-flex flex-column gap-3">
+                          {% set colors = ['#ff4d4f', '#ff7875', '#ffa39e', '#ffccc7', '#fff1f0', '#f0f0f0'] %}
+                          {% for item in pie_data %}
+                          <div class="d-flex justify-content-between align-items-center">
+                              <div class="text-truncate">
+                                  <i class="bi bi-circle-fill me-2" style="font-size: 8px; color: {{ colors[loop.index0] }};"></i>
+                                  <span class="text-secondary small">{{ item.name }}</span>
+                              </div>
+                              <span class="fw-bold small">¥{{ "{:,.0f}".format(item.value) }}</span>
+                          </div>
+                          {% else %}
+                          <p class="text-muted text-center py-4 mb-0">本年度暂无支出</p>
+                          {% endfor %}
+                      </div>
+                  </div>
+                  <div class="col-5">
+                      <div id="categoryPieChart"
+                           style="height: 160px;"
+                           data-pie='{{ pie_data|tojson }}'></div>
+                  </div>
+              </div>
+            {% endcall %}
+        </div>
+    </div>
+
+    {# 按你的要求：这里不再放“返回首页”按钮 #}
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+<script>
+    // 1. 初始化年度柱状图
+    const barChartEl = document.getElementById('yearBarChart');
+    if (barChartEl && window.echarts) {
+        const years = JSON.parse(barChartEl.dataset.years || '[]');
+        const amounts = JSON.parse(barChartEl.dataset.amounts || '[]');
+        const currentYear = barChartEl.dataset.current;
+        const maxVal = amounts.length ? Math.max(...amounts) : 0;
+
+        const barChart = echarts.init(barChartEl);
+        barChart.setOption({
+            grid: { top: '25%', bottom: '10%', left: '2%', right: '2%', containLabel: false },
+            xAxis: {
+                type: 'category',
+                data: years,
+                axisLine: {show: false},
+                axisTick: {show: false},
+                axisLabel: {color: '#999', fontSize: 10}
+            },
+            yAxis: { show: false },
+            series: [{
+                type: 'bar',
+                data: amounts.map((val, idx) => {
+                    const isCurrent = years[idx] == currentYear;
+                    const isMax = val === maxVal && val > 0;
+                    return {
+                        value: val,
+                        itemStyle: {
+                            color: isCurrent ? '#ff4d4f' : '#ffe5e5',
+                            borderRadius: [4, 4, 0, 0]
+                        },
+                        label: {
+                            show: isCurrent || isMax,
+                            position: 'top',
+                            formatter: (params) => {
+                                if (isCurrent && isMax) return '今年最高\n¥' + params.value;
+                                if (isCurrent) return '¥' + params.value;
+                                return '';
+                            },
+                            backgroundColor: isCurrent ? '#ff4d4f' : 'transparent',
+                            color: isCurrent ? 'white' : '#999',
+                            padding: [4, 8],
+                            borderRadius: 4,
+                            distance: 5
+                        }
+                    };
+                }),
+                barWidth: '40%'
+            }]
+        });
+
+        window.addEventListener('resize', () => barChart.resize());
+    }
+
+    // 2. 初始化分类甜甜圈图
+    const pieChartEl = document.getElementById('categoryPieChart');
+    if (pieChartEl && window.echarts) {
+        const pieData = JSON.parse(pieChartEl.dataset.pie || '[]');
+        if (pieData.length > 0) {
+            const pieChart = echarts.init(pieChartEl);
+            const colors = ['#ff4d4f', '#ff7875', '#ffa39e', '#ffccc7', '#fff1f0', '#f5f5f5'];
+
+            pieChart.setOption({
+                color: colors,
+                series: [{
+                    type: 'pie',
+                    radius: ['65%', '90%'],
+                    avoidLabelOverlap: false,
+                    label: { show: false },
+                    labelLine: { show: false },
+                    data: pieData,
+                    itemStyle: { borderWidth: 2, borderColor: '#fff' }
+                }]
+            });
+            window.addEventListener('resize', () => pieChart.resize());
+        }
+    }
+</script>
+{% endblock %}

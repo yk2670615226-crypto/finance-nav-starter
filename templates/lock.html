@@ -1,0 +1,63 @@
+{% extends "layout.html" %}
+
+{# 给 body 加一个专用 class，方便全局样式里控制锁屏页布局 #}
+{% block body_class %}lock-page{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* 锁屏页隐藏顶部导航栏 */
+  body.lock-page header.navbar {
+    display: none !important;
+  }
+
+  /* 去掉顶部多余间距，让内容更居中 */
+  body.lock-page main.container {
+    margin-top: 0;
+  }
+
+  /* 垂直居中整体内容 */
+  .lock-wrapper {
+    min-height: 80vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center lock-wrapper">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm border-0 text-center rounded-4">
+      <div class="card-body p-5">
+        <h2 class="mb-3">🔒 已锁定</h2>
+        <p class="text-muted mb-4">请输入密码以访问您的账本</p>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="alert alert-danger py-2 mb-3">
+            {{ messages[0] }}
+          </div>
+        {% endif %}
+        {% endwith %}
+
+        <form method="post" action="{{ url_for('do_unlock') }}">
+          <div class="mb-3">
+            <input
+              type="password"
+              name="password"
+              class="form-control form-control-lg text-center"
+              placeholder="密码"
+              required
+              autofocus
+            >
+          </div>
+          <button type="submit" class="btn btn-primary w-100 btn-lg">
+            解锁
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
