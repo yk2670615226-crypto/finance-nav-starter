@@ -623,25 +623,25 @@ def annual_report():
     while len(top_4) < 4:
         top_4.append({"name": "---", "value": 0})
 
-        years_list = []
-        amounts_list = []
-        with get_db_session() as db_session:
-            for y in range(year - 4, year + 1):
-                y_s = datetime(y, 1, 1)
-                y_e = datetime(y, 12, 31, 23, 59, 59)
-                val = (
-                    db_session.query(func.sum(Record.amount))
-                    .filter(
-                        Record.user_id == g.user_id,
-                        Record.type == "expense",
-                        Record.ts >= y_s,
-                        Record.ts <= y_e,
-                    )
-                    .scalar()
-                    or 0
+    years_list = []
+    amounts_list = []
+    with get_db_session() as db_session:
+        for y in range(year - 4, year + 1):
+            y_s = datetime(y, 1, 1)
+            y_e = datetime(y, 12, 31, 23, 59, 59)
+            val = (
+                db_session.query(func.sum(Record.amount))
+                .filter(
+                    Record.user_id == g.user_id,
+                    Record.type == "expense",
+                    Record.ts >= y_s,
+                    Record.ts <= y_e,
                 )
-                years_list.append(str(y))
-                amounts_list.append(round(val, 2))
+                .scalar()
+                or 0
+            )
+            years_list.append(str(y))
+            amounts_list.append(round(val, 2))
 
     pie_data = [{"name": c, "value": round(v, 2)} for c, v in cat_stats[:5]]
     other = total_exp - sum(x["value"] for x in pie_data)
