@@ -3,6 +3,7 @@ import math
 import os
 import platform
 import random
+import re
 import subprocess
 import threading
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from flask import (
     Blueprint,
     current_app,
     flash,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -24,7 +26,7 @@ from flask import (
 from sqlalchemy import extract, func
 
 from ai_service import predictor
-from models import AppSettings, Record
+from models import AppSettings, Record, User
 from webapp import socketio
 from webapp.config import get_data_path
 from webapp.db import get_db_session
@@ -33,6 +35,16 @@ bp = Blueprint("main", __name__)
 
 MAX_IMPORT_SIZE = 5 * 1024 * 1024  # 5MB
 MAX_EXPORT_ROWS = 50000
+MIN_REPORT_MONTHS = 1
+MAX_REPORT_MONTHS = 36
+
+AUTH_FREE_ENDPOINTS = {
+    "main.login",
+    "main.register",
+    "main.do_login",
+    "main.do_register",
+    "static",
+}
 
 
 def get_month_range(target_date: datetime) -> Tuple[datetime, datetime]:
@@ -54,7 +66,9 @@ def train_model_async() -> None:
     threading.Thread(target=_train_task, daemon=True).start()
 
 
-def generate_demo_data(session_obj, target_records: int = 10000, years: int = 10) -> None:
+def generate_demo_data(
+    session_obj, user_id: int, target_records: int = 10000, years: int = 10
+) -> None:
     categories = {
         "餐饮": ["工作餐", "晚饭", "KFC", "火锅", "买菜", "奶茶", "夜宵", "烧烤"],
         "交通": ["地铁", "打车", "加油", "公交", "停车费", "高铁", "机票"],
@@ -110,7 +124,14 @@ def generate_demo_data(session_obj, target_records: int = 10000, years: int = 10
             amount = round(base_amt * day_factor * m_factor, 2)
 
         records.append(
-            Record(ts=ts, amount=amount, type=rtype, category=category, note=note)
+            Record(
+                ts=ts,
+                amount=amount,
+                type=rtype,
+                category=category,
+                note=note,
+                user_id=user_id,
+            )
         )
 
     session_obj.add_all(records)
@@ -120,9 +141,9 @@ def generate_demo_data(session_obj, target_records: int = 10000, years: int = 10
     avg_monthly = expense_sum / months_count if months_count else 5000
     base_budget = round(avg_monthly * 1.15 / 100) * 100
 
-    cfg = session_obj.query(AppSettings).first()
+    cfg = session_obj.query(AppSettings).filter(AppSettings.user_id == user_id).first()
     if not cfg:
-        cfg = AppSettings()
+        cfg = AppSettings(user_id=user_id)
         session_obj.add(cfg)
     cfg.monthly_budget = base_budget
     cfg.enable_lock = False
@@ -132,13 +153,17 @@ def generate_demo_data(session_obj, target_records: int = 10000, years: int = 10
     train_model_async()
 
 
-def get_settings(db_session):
-    cfg = db_session.query(AppSettings).first()
+def get_settings(db_session, user_id: int | None):
+    if not user_id:
+        return AppSettings(monthly_budget=0.0, enable_lock=False, is_demo=False)
+
+    cfg = db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
     if not cfg:
-        cfg = AppSettings(monthly_budget=8000.0, enable_lock=False, is_demo=True)
+        cfg = AppSettings(
+            user_id=user_id, monthly_budget=8000.0, enable_lock=False, is_demo=False
+        )
         db_session.add(cfg)
-        generate_demo_data(db_session)
-        cfg = db_session.query(AppSettings).first()
+        db_session.commit()
     return cfg
 
 
@@ -158,20 +183,90 @@ def get_budget_status(total: float, budget: float) -> Tuple[str, str]:
     return st_text, st_cls
 
 
+def count_months(start: datetime, end: datetime) -> int:
+    return (end.year - start.year) * 12 + end.month - start.month + 1
+
+
+def shift_year(dt: datetime, years: int = -1) -> datetime:
+    try:
+        return dt.replace(year=dt.year + years)
+    except ValueError:
+        # 处理 2 月 29 日等不存在日期
+        safe_day = min(dt.day, 28)
+        return dt.replace(year=dt.year + years, day=safe_day)
+
+
+def summarize_monthly(records: list[Record]):
+    monthly_map: dict[str, dict[str, float]] = {}
+    for r in records:
+        key = r.ts.strftime("%Y-%m")
+        monthly_map.setdefault(key, {"income": 0.0, "expense": 0.0})
+        monthly_map[key]["income" if r.type == "income" else "expense"] += r.amount
+
+    monthly_rows = []
+    for key in sorted(monthly_map.keys()):
+        data = monthly_map[key]
+        monthly_rows.append(
+            {
+                "月份": key,
+                "收入": round(data.get("income", 0.0), 2),
+                "支出": round(data.get("expense", 0.0), 2),
+                "结余": round(data.get("income", 0.0) - data.get("expense", 0.0), 2),
+            }
+        )
+    return monthly_rows
+
+
+def summarize_totals(records: list[Record]) -> dict[str, float]:
+    income = sum(r.amount for r in records if r.type == "income")
+    expense = sum(r.amount for r in records if r.type == "expense")
+    return {
+        "income": round(income, 2),
+        "expense": round(expense, 2),
+        "balance": round(income - expense, 2),
+    }
+
+
+@bp.before_app_request
+def load_current_user():
+    g.user = None
+    user_id = session.get("user_id")
+    if user_id:
+        with get_db_session() as db_session:
+            g.user = db_session.get(User, user_id)
+            if not g.user:
+                session.clear()
+
+    g.user_id = g.user.id if g.user else None
+
+    if request.endpoint in AUTH_FREE_ENDPOINTS or request.endpoint is None:
+        return None
+
+    if not g.user_id:
+        next_url = request.path if request.method == "GET" else url_for("main.index")
+        return redirect(url_for("main.login", next=next_url))
+
+
 @bp.app_context_processor
 def inject_config():
     with get_db_session() as db_session:
-        return {"config": get_settings(db_session)}
+        return {"config": get_settings(db_session, g.get("user_id"))}
 
 
 @bp.before_app_request
 def check_app_lock():
-    if request.endpoint in ["static", "main.lock_screen", "main.do_unlock"]:
+    if request.endpoint in AUTH_FREE_ENDPOINTS or request.endpoint in [
+        "main.lock_screen",
+        "main.do_unlock",
+    ]:
+        return None
+
+    if not g.get("user_id"):
         return None
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
-        if cfg.enable_lock and not session.get("is_unlocked"):
+        cfg = get_settings(db_session, g.user_id)
+        if cfg.enable_lock and session.get("unlocked_user_id") != g.user_id:
             return redirect(url_for("main.lock_screen"))
     return None
 
@@ -181,6 +276,81 @@ def shutdown_session(exception=None):
     session_factory = current_app.config.get("SessionFactory")
     if session_factory:
         session_factory.remove()
+
+
+@bp.route("/login")
+def login():
+    if g.get("user_id"):
+        return redirect(url_for("main.index"))
+    return render_template("login.html")
+
+
+@bp.route("/register")
+def register():
+    if g.get("user_id"):
+        return redirect(url_for("main.index"))
+    return render_template("register.html")
+
+
+@bp.post("/login")
+def do_login():
+    uid = (request.form.get("uid") or "").strip()
+    password = (request.form.get("password") or "").strip()
+
+    if not uid or not password:
+        flash("请输入 UID 和密码", "warning")
+        return redirect(url_for("main.login"))
+
+    with get_db_session() as db_session:
+        user = db_session.query(User).filter(User.uid == uid).first()
+        if not user or not user.check_password(password):
+            flash("账号或密码错误", "danger")
+            return redirect(url_for("main.login"))
+
+    session["user_id"] = user.id
+    session["username"] = user.username
+    next_url = request.args.get("next") or url_for("main.index")
+    return redirect(next_url)
+
+
+@bp.post("/register")
+def do_register():
+    uid = (request.form.get("uid") or "").strip()
+    username = (request.form.get("username") or "").strip()
+    password = (request.form.get("password") or "").strip()
+
+    if not uid or not username or not password:
+        flash("请完整填写所有字段", "warning")
+        return redirect(url_for("main.register"))
+
+    if not re.fullmatch(r"[A-Za-z0-9]+", uid):
+        flash("UID 只能包含字母和数字", "danger")
+        return redirect(url_for("main.register"))
+
+    with get_db_session() as db_session:
+        exists = db_session.query(User).filter(User.uid == uid).first()
+        if exists:
+            flash("UID 已被占用，请更换", "danger")
+            return redirect(url_for("main.register"))
+
+        user = User(uid=uid, username=username)
+        user.set_password(password)
+        db_session.add(user)
+        db_session.commit()
+
+        # 初始化用户配置
+        get_settings(db_session, user.id)
+
+        session["user_id"] = user.id
+        session["username"] = user.username
+
+    return redirect(url_for("main.index"))
+
+
+@bp.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("main.login"))
 
 
 @bp.route("/lock")
@@ -196,9 +366,9 @@ def do_unlock():
         return redirect(url_for("main.lock_screen"))
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
         if cfg.check_lock_password(password):
-            session["is_unlocked"] = True
+            session["unlocked_user_id"] = g.user_id
             return redirect(url_for("main.index"))
 
     flash("密码错误", "danger")
@@ -211,7 +381,7 @@ def lock_update():
     action = data.get("action", "").strip()
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
 
         if action == "lock_enable":
             pwd = data.get("password", "").strip()
@@ -225,7 +395,7 @@ def lock_update():
         elif action == "lock_disable":
             cfg.enable_lock = False
             db_session.commit()
-            session.pop("is_unlocked", None)
+            session.pop("unlocked_user_id", None)
             flash("已关闭应用锁", "success")
     return redirect(request.referrer or url_for("main.index"))
 
@@ -236,10 +406,15 @@ def index():
     start, end = get_month_range(now)
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
         total_expense = (
             db_session.query(func.sum(Record.amount))
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id,
+                Record.type == "expense",
+                Record.ts >= start,
+                Record.ts <= end,
+            )
             .scalar()
             or 0.0
         )
@@ -247,10 +422,16 @@ def index():
         cats = [
             r[0]
             for r in db_session.query(Record.category)
-            .filter(Record.category.isnot(None))
+            .filter(Record.user_id == g.user_id, Record.category.isnot(None))
             .distinct()
         ]
-        recent = db_session.query(Record).order_by(Record.ts.desc()).limit(5).all()
+        recent = (
+            db_session.query(Record)
+            .filter(Record.user_id == g.user_id)
+            .order_by(Record.ts.desc())
+            .limit(5)
+            .all()
+        )
 
     return render_template(
         "index.html",
@@ -266,16 +447,18 @@ def index():
 @bp.route("/start_demo")
 def start_demo():
     with get_db_session() as db_session:
-        generate_demo_data(db_session)
+        generate_demo_data(db_session, g.user_id)
     return redirect(url_for("main.index"))
 
 
 @bp.route("/exit_demo", methods=["POST"])
 def exit_demo():
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
         if cfg.is_demo:
-            db_session.query(Record).delete()
+            db_session.query(Record).filter(Record.user_id == g.user_id).delete(
+                synchronize_session=False
+            )
             cfg.is_demo = False
             cfg.monthly_budget = 0
             db_session.commit()
@@ -294,7 +477,7 @@ def records_page():
     page = request.args.get("page", 1, type=int)
 
     with get_db_session() as db_session:
-        q = db_session.query(Record)
+        q = db_session.query(Record).filter(Record.user_id == g.user_id)
 
         if start:
             try:
@@ -328,7 +511,12 @@ def records_page():
         page = max(1, min(page, pages))
 
         records = q.offset((page - 1) * per_page).limit(per_page).all() if total else []
-        cats = [r[0] for r in db_session.query(Record.category).distinct()]
+        cats = [
+            r[0]
+            for r in db_session.query(Record.category)
+            .filter(Record.user_id == g.user_id)
+            .distinct()
+        ]
 
     q_params = {k: v for k, v in request.args.items() if k != "page" and v}
     return render_template(
@@ -351,7 +539,9 @@ def annual_report():
     with get_db_session() as db_session:
         totals = (
             db_session.query(Record.type, func.sum(Record.amount))
-            .filter(Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id, Record.ts >= start, Record.ts <= end
+            )
             .group_by(Record.type)
             .all()
         )
@@ -362,14 +552,24 @@ def annual_report():
 
         max_rec = (
             db_session.query(Record)
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id,
+                Record.type == "expense",
+                Record.ts >= start,
+                Record.ts <= end,
+            )
             .order_by(Record.amount.desc())
             .first()
         )
 
         cat_stats = (
             db_session.query(Record.category, func.sum(Record.amount))
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id,
+                Record.type == "expense",
+                Record.ts >= start,
+                Record.ts <= end,
+            )
             .group_by(Record.category)
             .order_by(func.sum(Record.amount).desc())
             .all()
@@ -379,20 +579,25 @@ def annual_report():
     while len(top_4) < 4:
         top_4.append({"name": "---", "value": 0})
 
-    years_list = []
-    amounts_list = []
-    with get_db_session() as db_session:
-        for y in range(year - 4, year + 1):
-            y_s = datetime(y, 1, 1)
-            y_e = datetime(y, 12, 31, 23, 59, 59)
-            val = (
-                db_session.query(func.sum(Record.amount))
-                .filter(Record.type == "expense", Record.ts >= y_s, Record.ts <= y_e)
-                .scalar()
-                or 0
-            )
-            years_list.append(str(y))
-            amounts_list.append(round(val, 2))
+        years_list = []
+        amounts_list = []
+        with get_db_session() as db_session:
+            for y in range(year - 4, year + 1):
+                y_s = datetime(y, 1, 1)
+                y_e = datetime(y, 12, 31, 23, 59, 59)
+                val = (
+                    db_session.query(func.sum(Record.amount))
+                    .filter(
+                        Record.user_id == g.user_id,
+                        Record.type == "expense",
+                        Record.ts >= y_s,
+                        Record.ts <= y_e,
+                    )
+                    .scalar()
+                    or 0
+                )
+                years_list.append(str(y))
+                amounts_list.append(round(val, 2))
 
     pie_data = [{"name": c, "value": round(v, 2)} for c, v in cat_stats[:5]]
     other = total_exp - sum(x["value"] for x in pie_data)
@@ -438,7 +643,14 @@ def records_new():
 
     with get_db_session() as db_session:
         db_session.add(
-            Record(ts=datetime.now(), amount=amount, type=rtype, category=cat, note=note)
+            Record(
+                ts=datetime.now(),
+                amount=amount,
+                type=rtype,
+                category=cat,
+                note=note,
+                user_id=g.user_id,
+            )
         )
         db_session.commit()
 
@@ -458,7 +670,11 @@ def records_update():
         return redirect(url_for("main.records_page"))
 
     with get_db_session() as db_session:
-        rec = db_session.query(Record).get(rec_id)
+        rec = (
+            db_session.query(Record)
+            .filter(Record.id == rec_id, Record.user_id == g.user_id)
+            .first()
+        )
         if not rec:
             flash("记录不存在", "warning")
             return redirect(url_for("main.records_page"))
@@ -490,7 +706,9 @@ def records_delete():
         return redirect(url_for("main.records_page"))
 
     with get_db_session() as db_session:
-        db_session.query(Record).filter(Record.id.in_(ids)).delete(synchronize_session=False)
+        db_session.query(Record).filter(
+            Record.user_id == g.user_id, Record.id.in_(ids)
+        ).delete(synchronize_session=False)
         db_session.commit()
 
     train_model_async()
@@ -515,7 +733,7 @@ def api_update_budget():
         return jsonify({"success": False, "error": "预算不能为负数"})
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
         cfg.monthly_budget = val
         db_session.commit()
 
@@ -537,7 +755,12 @@ def api_stats_trend():
             end = target.replace(month=12, day=31, hour=23, minute=59, second=59)
             q = (
                 db_session.query(extract("month", Record.ts).label("k"), func.sum(Record.amount))
-                .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+                .filter(
+                    Record.user_id == g.user_id,
+                    Record.type == "expense",
+                    Record.ts >= start,
+                    Record.ts <= end,
+                )
                 .group_by("k")
                 .all()
             )
@@ -550,7 +773,12 @@ def api_stats_trend():
             _, days = calendar.monthrange(target.year, target.month)
             q = (
                 db_session.query(extract("day", Record.ts).label("k"), func.sum(Record.amount))
-                .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+                .filter(
+                    Record.user_id == g.user_id,
+                    Record.type == "expense",
+                    Record.ts >= start,
+                    Record.ts <= end,
+                )
                 .group_by("k")
                 .all()
             )
@@ -573,7 +801,12 @@ def api_stats_category():
     with get_db_session() as db_session:
         raw_data = (
             db_session.query(Record.category, func.sum(Record.amount))
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id,
+                Record.type == "expense",
+                Record.ts >= start,
+                Record.ts <= end,
+            )
             .group_by(Record.category)
             .all()
         )
@@ -597,11 +830,16 @@ def api_summary():
     with get_db_session() as db_session:
         total = (
             db_session.query(func.sum(Record.amount))
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .filter(
+                Record.user_id == g.user_id,
+                Record.type == "expense",
+                Record.ts >= start,
+                Record.ts <= end,
+            )
             .scalar()
             or 0.0
         )
-        cfg = get_settings(db_session)
+        cfg = get_settings(db_session, g.user_id)
         bg = cfg.monthly_budget
 
     st_text, st_cls = get_budget_status(total, bg)
@@ -681,6 +919,7 @@ def api_import_data():
                     type=final_tp,
                     category=row["category"],
                     note=row["note"],
+                    user_id=g.user_id,
                 )
             )
 
@@ -699,40 +938,265 @@ def api_import_data():
         return jsonify({"success": False, "msg": str(exc)})
 
 
+def build_comparison_rows(current_label: str, prev_label: str, recs, prev_recs):
+    current_total = summarize_totals(recs)
+    prev_total = summarize_totals(prev_recs)
+    diff_income = current_total["income"] - prev_total["income"]
+    diff_expense = current_total["expense"] - prev_total["expense"]
+
+    return [
+        {
+            "期间": current_label,
+            "总收入": current_total["income"],
+            "总支出": current_total["expense"],
+            "结余": current_total["balance"],
+            "同比收入差额": round(diff_income, 2),
+            "同比支出差额": round(diff_expense, 2),
+        },
+        {
+            "期间": prev_label,
+            "总收入": prev_total["income"],
+            "总支出": prev_total["expense"],
+            "结余": prev_total["balance"],
+            "同比收入差额": "基准",  # 对比行标记
+            "同比支出差额": "基准",
+        },
+    ]
+
+
+def create_excel_report(
+    path: Path,
+    recs: list[Record],
+    monthly_rows: list[dict[str, float]],
+    comparison_rows,
+    include_comparison: bool,
+):
+    record_data = [
+        {
+            "时间": r.ts,
+            "类型": ("收入" if r.type == "income" else "支出"),
+            "金额": r.amount,
+            "类别": r.category,
+            "备注": r.note,
+        }
+        for r in recs
+    ]
+
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame(record_data).to_excel(writer, index=False, sheet_name="流水明细")
+        pd.DataFrame(monthly_rows).to_excel(writer, index=False, sheet_name="月度汇总")
+
+        if include_comparison and comparison_rows:
+            pd.DataFrame(comparison_rows).to_excel(
+                writer, index=False, sheet_name="年度对比"
+            )
+        else:
+            pd.DataFrame([{"说明": "选定范围小于 12 个月，未生成年度对比。"}]).to_excel(
+                writer, index=False, sheet_name="年度对比"
+            )
+
+
+def create_pdf_report(
+    path: Path,
+    recs: list[Record],
+    monthly_rows: list[dict[str, float]],
+    comparison_rows,
+    include_comparison: bool,
+    start: datetime,
+    end: datetime,
+):
+    def escape_pdf_text(text: str) -> str:
+        return (
+            text.replace("\\", "\\\\")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+        )
+
+    def add_line(buffer: list[str], text: str) -> None:
+        safe = escape_pdf_text(text)
+        buffer.append(f"({safe}) Tj")
+        buffer.append("T*")
+
+    summary_lines: list[str] = []
+    summary_lines.append(
+        f"Report {start.strftime('%Y-%m-%d')} - {end.strftime('%Y-%m-%d')}"
+    )
+    totals = summarize_totals(recs)
+    summary_lines.append(
+        f"Income: {totals['income']:.2f}  Expense: {totals['expense']:.2f}  Balance: {totals['balance']:.2f}"
+    )
+    summary_lines.append("Monthly summary:")
+    for row in monthly_rows:
+        summary_lines.append(
+            f" {row['月份']}: +{row['收入']:.2f} / -{row['支出']:.2f} = {row['结余']:.2f}"
+        )
+
+    if include_comparison and comparison_rows:
+        summary_lines.append("Yearly comparison:")
+        for row in comparison_rows:
+            summary_lines.append(
+                f" {row['期间']}: income {row['总收入']} | expense {row['总支出']} | balance {row['结余']}"
+            )
+
+    summary_lines.append("Top records:")
+    for r in sorted(recs, key=lambda x: x.ts, reverse=True)[:20]:
+        summary_lines.append(
+            f" {r.ts.strftime('%Y-%m-%d')}: {'IN' if r.type == 'income' else 'OUT'} {r.amount:.2f} [{r.category}] {r.note}"
+        )
+
+    content_lines = [
+        "BT",
+        "/F1 12 Tf",
+        "72 750 Td",
+        "12 TL",
+    ]
+    for line in summary_lines:
+        add_line(content_lines, line)
+    content_lines.append("ET")
+
+    content_stream = "\n".join(content_lines).encode("latin-1", "replace")
+    objects = []
+
+    def add_object(content: bytes) -> int:
+        objects.append(content)
+        return len(objects)
+
+    add_object(b"<< /Type /Catalog /Pages 2 0 R >>")  # 1 0 obj
+    add_object(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")  # 2 0 obj
+    add_object(
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+    )
+
+    add_object(
+        f"<< /Length {len(content_stream)} >>\nstream\n".encode()
+        + content_stream
+        + b"\nendstream"
+    )
+    add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    offsets = []
+    buffer = bytearray()
+    buffer.extend(b"%PDF-1.4\n")
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(len(buffer))
+        buffer.extend(f"{idx} 0 obj\n".encode())
+        buffer.extend(obj)
+        buffer.extend(b"\nendobj\n")
+
+    xref_pos = len(buffer)
+    buffer.extend(f"xref\n0 {len(objects)+1}\n".encode())
+    buffer.extend(b"0000000000 65535 f \n")
+    for off in offsets:
+        buffer.extend(f"{off:010d} 00000 n \n".encode())
+
+    buffer.extend(
+        b"trailer\n" + f"<< /Size {len(objects)+1} /Root 1 0 R >>\n".encode()
+    )
+    buffer.extend(f"startxref\n{xref_pos}\n%%EOF".encode())
+
+    path.write_bytes(buffer)
+
+
+@bp.post("/api/export_report")
 @bp.post("/api/export_excel")
-def api_export_excel():
+def api_export_report():
+    data = request.json or request.form or {}
+    start_str = data.get("start_date")
+    end_str = data.get("end_date")
+    fmt = (data.get("format") or "excel").lower()
+
+    if fmt not in ("excel", "pdf"):
+        return jsonify({"success": False, "msg": "仅支持 PDF 或 Excel 导出"})
+
+    if not start_str or not end_str:
+        return jsonify({"success": False, "msg": "请选择报表的开始和结束日期"})
+
     try:
-        with get_db_session() as db_session:
-            recs = db_session.query(Record).order_by(Record.ts.desc()).all()
-        if not recs:
-            return jsonify({"success": False, "msg": "无数据"})
+        start = datetime.strptime(start_str, "%Y-%m-%d").replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = datetime.strptime(end_str, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, microsecond=999999
+        )
+    except ValueError:
+        return jsonify({"success": False, "msg": "日期格式不正确"})
 
-        if len(recs) > MAX_EXPORT_ROWS:
-            return jsonify({"success": False, "msg": "数据量过大，请筛选后再导出（上限 5 万行）"})
+    if end < start:
+        return jsonify({"success": False, "msg": "结束日期不能早于开始日期"})
 
-        desktop = Path.home() / "Desktop"
-        name = f"账单备份_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-        path = desktop / name
-
-        desktop.mkdir(parents=True, exist_ok=True)
-
-        data = [
+    months_span = count_months(start, end)
+    if months_span < MIN_REPORT_MONTHS or months_span > MAX_REPORT_MONTHS:
+        return jsonify(
             {
-                "时间": r.ts,
-                "类型": ("收入" if r.type == "income" else "支出"),
-                "金额": r.amount,
-                "类别": r.category,
-                "备注": r.note,
+                "success": False,
+                "msg": "覆盖范围需在 1-36 个月内，请重新选择日期",
             }
-            for r in recs
-        ]
+        )
 
-        pd.DataFrame(data).to_excel(path, index=False)
+    with get_db_session() as db_session:
+        recs = (
+            db_session.query(Record)
+            .filter(Record.user_id == g.user_id, Record.ts >= start, Record.ts <= end)
+            .order_by(Record.ts.asc())
+            .all()
+        )
+
+        if not recs:
+            return jsonify({"success": False, "msg": "选定时间内无数据"})
+        if len(recs) > MAX_EXPORT_ROWS:
+            return jsonify({"success": False, "msg": "数据量过大，请缩小时间范围"})
+
+        comparison_recs = []
+        include_comparison = months_span >= 12
+        if include_comparison:
+            prev_start = shift_year(start)
+            prev_end = shift_year(end)
+            comparison_recs = (
+                db_session.query(Record)
+                .filter(
+                    Record.user_id == g.user_id,
+                    Record.ts >= prev_start,
+                    Record.ts <= prev_end,
+                )
+                .order_by(Record.ts.asc())
+                .all()
+            )
+
+    monthly_rows = summarize_monthly(recs)
+    comparison_rows = []
+    if include_comparison:
+        comparison_rows = build_comparison_rows(
+            f"当前区间（{start.strftime('%Y-%m-%d')} 至 {end.strftime('%Y-%m-%d')})",
+            f"对比区间（{shift_year(start).strftime('%Y-%m-%d')} 至 {shift_year(end).strftime('%Y-%m-%d')})",
+            recs,
+            comparison_recs,
+        )
+
+    desktop = Path.home() / "Desktop"
+    desktop.mkdir(parents=True, exist_ok=True)
+    filename = (
+        f"财务报表_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}.{ 'xlsx' if fmt == 'excel' else 'pdf'}"
+    )
+    path = desktop / filename
+
+    try:
+        if fmt == "excel":
+            create_excel_report(path, recs, monthly_rows, comparison_rows, include_comparison)
+        else:
+            create_pdf_report(
+                path,
+                recs,
+                monthly_rows,
+                comparison_rows,
+                include_comparison,
+                start,
+                end,
+            )
 
         if platform.system() == "Windows":
             subprocess.run(["explorer", "/select,", str(path)], check=False)
 
-        return jsonify({"success": True, "path": str(path)})
+        return jsonify({"success": True, "path": str(path), "format": fmt})
     except Exception as exc:
         return jsonify({"success": False, "msg": str(exc)})
 
