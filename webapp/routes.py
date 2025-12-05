@@ -1,3 +1,5 @@
+"""主要路由与业务逻辑，实现账本查询、导入导出等功能。"""
+
 import calendar
 import math
 import os
@@ -24,20 +26,25 @@ from flask import (
     session,
     url_for,
 )
+
 try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
 
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
-    _REPORTLAB_ERROR = (
-        "未安装 reportlab，无法生成 PDF 报表，请运行 'pip install -r requirements.txt' 后重试。"
-    )
+    _REPORTLAB_ERROR = "未安装 reportlab，无法生成 PDF 报表，请运行 'pip install -r requirements.txt' 后重试。"
 from sqlalchemy import extract, func
 
 from ai_service import predictor
@@ -48,7 +55,7 @@ from webapp.db import db_write_lock, get_db_session
 
 bp = Blueprint("main", __name__)
 
-MAX_IMPORT_SIZE = 5 * 1024 * 1024  # 5MB
+MAX_IMPORT_SIZE_BYTES = 5 * 1024 * 1024
 MAX_EXPORT_ROWS = 50000
 MIN_REPORT_MONTHS = 1
 MAX_REPORT_MONTHS = 36
@@ -67,6 +74,7 @@ _train_lock = threading.Lock()
 
 
 def get_month_range(target_date: datetime) -> Tuple[datetime, datetime]:
+    """计算目标日期所在月份的起止时间。"""
     start = target_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     _, last_day = calendar.monthrange(start.year, start.month)
     end = start.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
@@ -74,19 +82,21 @@ def get_month_range(target_date: datetime) -> Tuple[datetime, datetime]:
 
 
 def train_model_async(app: Flask) -> None:
+    """异步触发智能分类模型训练，避免阻塞请求线程。"""
+
     def _train_task():
         with app.app_context():
             with get_db_session(app) as db_session:
                 try:
                     predictor.train(db_session)
-                except Exception as exc:  # pragma: no cover - logging only
+                except Exception as exc:
                     print(f"后台训练失败: {exc}")
 
     threading.Thread(target=_train_task, daemon=True).start()
 
 
 def schedule_model_training() -> None:
-    """Debounce model training to reduce repeated work under frequent edits."""
+    """通过防抖方式安排模型训练，减少频繁编辑导致的重复开销。"""
 
     app = current_app._get_current_object()
 
@@ -105,6 +115,7 @@ def schedule_model_training() -> None:
 def generate_demo_data(
     session_obj, user_id: int, target_records: int = 10000, years: int = 10
 ) -> None:
+    """封装写锁，生成演示用的随机账单数据。"""
     with db_write_lock:
         _generate_demo_data(session_obj, user_id, target_records, years)
 
@@ -112,6 +123,7 @@ def generate_demo_data(
 def _generate_demo_data(
     session_obj, user_id: int, target_records: int = 10000, years: int = 10
 ) -> None:
+    """生成指定年份范围的随机收入支出记录。"""
     categories = {
         "餐饮": ["工作餐", "晚饭", "KFC", "火锅", "买菜", "奶茶", "夜宵", "烧烤"],
         "交通": ["地铁", "打车", "加油", "公交", "停车费", "高铁", "机票"],
@@ -198,46 +210,61 @@ def _generate_demo_data(
 
 
 def get_settings(db_session, user_id: int | None):
+    """读取或初始化指定用户的全局配置。"""
     if not user_id:
         return AppSettings(monthly_budget=0.0, enable_lock=False, is_demo=False)
 
     cfg = db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
     if not cfg:
         generate_demo_data(db_session, user_id)
-        cfg = db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
+        cfg = (
+            db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
+        )
     return cfg
 
 
 def get_budget_status(total: float, budget: float) -> Tuple[str, str]:
+    """根据预算使用比例返回状态文本与样式。"""
     st_text = "预算正常"
     st_cls = "badge bg-success-subtle text-success border-success-subtle"
 
     if budget > 0:
         pct = (total / budget) * 100
         if pct >= 100:
-            st_text, st_cls = "已超支！", "badge bg-danger-subtle text-danger border-danger-subtle"
+            st_text, st_cls = (
+                "已超支！",
+                "badge bg-danger-subtle text-danger border-danger-subtle",
+            )
         elif pct >= 80:
-            st_text, st_cls = "预警", "badge bg-warning-subtle text-warning border-warning-subtle"
+            st_text, st_cls = (
+                "预警",
+                "badge bg-warning-subtle text-warning border-warning-subtle",
+            )
     else:
-        st_text, st_cls = "未设预算", "badge bg-light text-primary border-primary border-dashed"
+        st_text, st_cls = (
+            "未设预算",
+            "badge bg-light text-primary border-primary border-dashed",
+        )
 
     return st_text, st_cls
 
 
 def count_months(start: datetime, end: datetime) -> int:
+    """计算两个日期间（含端点）的月份数量。"""
     return (end.year - start.year) * 12 + end.month - start.month + 1
 
 
 def shift_year(dt: datetime, years: int = -1) -> datetime:
+    """对日期进行年份偏移，并兼顾闰年日期安全。"""
     try:
         return dt.replace(year=dt.year + years)
     except ValueError:
-        # 处理 2 月 29 日等不存在日期
         safe_day = min(dt.day, 28)
         return dt.replace(year=dt.year + years, day=safe_day)
 
 
 def summarize_monthly(records: list[Record]):
+    """汇总记录的月度收入、支出与结余数据。"""
     monthly_map: dict[str, dict[str, float]] = {}
     for r in records:
         key = r.ts.strftime("%Y-%m")
@@ -259,6 +286,7 @@ def summarize_monthly(records: list[Record]):
 
 
 def summarize_totals(records: list[Record]) -> dict[str, float]:
+    """统计记录集合的总收入、总支出与结余。"""
     income = sum(r.amount for r in records if r.type == "income")
     expense = sum(r.amount for r in records if r.type == "expense")
     return {
@@ -379,8 +407,6 @@ def do_register():
             user.set_password(password)
             db_session.add(user)
             db_session.commit()
-
-            # 初始化用户配置
             get_settings(db_session, user.id)
 
             session["user_id"] = user.id
@@ -634,9 +660,7 @@ def annual_report():
     with get_db_session() as db_session:
         totals = (
             db_session.query(Record.type, func.sum(Record.amount))
-            .filter(
-                Record.user_id == g.user_id, Record.ts >= start, Record.ts <= end
-            )
+            .filter(Record.user_id == g.user_id, Record.ts >= start, Record.ts <= end)
             .group_by(Record.type)
             .all()
         )
@@ -734,7 +758,11 @@ def records_new():
         flash("收支类型无效", "danger")
         return redirect(url_for("main.index"))
 
-    cat = "收入" if rtype == "income" else (manual_cat if manual_cat else predictor.predict(note))
+    cat = (
+        "收入"
+        if rtype == "income"
+        else (manual_cat if manual_cat else predictor.predict(note))
+    )
 
     with get_db_session() as db_session:
         with db_write_lock:
@@ -854,7 +882,9 @@ def api_stats_trend():
             start = target.replace(month=1, day=1, hour=0, minute=0, second=0)
             end = target.replace(month=12, day=31, hour=23, minute=59, second=59)
             q = (
-                db_session.query(extract("month", Record.ts).label("k"), func.sum(Record.amount))
+                db_session.query(
+                    extract("month", Record.ts).label("k"), func.sum(Record.amount)
+                )
                 .filter(
                     Record.user_id == g.user_id,
                     Record.type == "expense",
@@ -872,7 +902,9 @@ def api_stats_trend():
             start, end = get_month_range(target)
             _, days = calendar.monthrange(target.year, target.month)
             q = (
-                db_session.query(extract("day", Record.ts).label("k"), func.sum(Record.amount))
+                db_session.query(
+                    extract("day", Record.ts).label("k"), func.sum(Record.amount)
+                )
                 .filter(
                     Record.user_id == g.user_id,
                     Record.type == "expense",
@@ -957,15 +989,21 @@ def api_summary():
 
 @bp.post("/api/import_data")
 def api_import_data():
-    if request.content_length and request.content_length > MAX_IMPORT_SIZE:
-        return jsonify({"success": False, "msg": "文件过大，请压缩或分批导入（上限 5MB）"})
+    if request.content_length and request.content_length > MAX_IMPORT_SIZE_BYTES:
+        return jsonify(
+            {"success": False, "msg": "文件过大，请压缩或分批导入（上限 5MB）"}
+        )
 
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"success": False, "msg": "文件无效"})
 
     filename = f.filename.lower()
-    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
+    if not (
+        filename.endswith(".csv")
+        or filename.endswith(".xlsx")
+        or filename.endswith(".xls")
+    ):
         return jsonify({"success": False, "msg": "仅支持 CSV 或 Excel 文件"})
 
     try:
@@ -1041,6 +1079,7 @@ def api_import_data():
 
 
 def build_comparison_rows(current_label: str, prev_label: str, recs, prev_recs):
+    """生成当前周期与对比周期的汇总行。"""
     current_total = summarize_totals(recs)
     prev_total = summarize_totals(prev_recs)
     diff_income = current_total["income"] - prev_total["income"]
@@ -1060,7 +1099,7 @@ def build_comparison_rows(current_label: str, prev_label: str, recs, prev_recs):
             "总收入": prev_total["income"],
             "总支出": prev_total["expense"],
             "结余": prev_total["balance"],
-            "同比收入差额": "基准",  # 对比行标记
+            "同比收入差额": "基准",
             "同比支出差额": "基准",
         },
     ]
@@ -1073,6 +1112,7 @@ def create_excel_report(
     comparison_rows,
     include_comparison: bool,
 ):
+    """生成包含流水、月度汇总和可选年度对比的 Excel 报表。"""
     record_data = [
         {
             "时间": r.ts,
@@ -1124,7 +1164,12 @@ def create_pdf_report(
     title_style.spaceAfter = 12
 
     doc = SimpleDocTemplate(
-        str(path), pagesize=A4, leftMargin=36, rightMargin=36, topMargin=48, bottomMargin=36
+        str(path),
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=48,
+        bottomMargin=36,
     )
 
     elements = [
@@ -1176,14 +1221,28 @@ def create_pdf_report(
     render_table("月度汇总", monthly_data)
 
     if include_comparison:
-        comparison_data = [["期间", "总收入", "总支出", "结余", "同比收入差额", "同比支出差额"]]
+        comparison_data = [
+            ["期间", "总收入", "总支出", "结余", "同比收入差额", "同比支出差额"]
+        ]
         for row in comparison_rows or []:
             comparison_data.append(
                 [
                     row["期间"],
-                    f"{row['总收入']:.2f}" if isinstance(row["总收入"], (int, float)) else row["总收入"],
-                    f"{row['总支出']:.2f}" if isinstance(row["总支出"], (int, float)) else row["总支出"],
-                    f"{row['结余']:.2f}" if isinstance(row["结余"], (int, float)) else row["结余"],
+                    (
+                        f"{row['总收入']:.2f}"
+                        if isinstance(row["总收入"], (int, float))
+                        else row["总收入"]
+                    ),
+                    (
+                        f"{row['总支出']:.2f}"
+                        if isinstance(row["总支出"], (int, float))
+                        else row["总支出"]
+                    ),
+                    (
+                        f"{row['结余']:.2f}"
+                        if isinstance(row["结余"], (int, float))
+                        else row["结余"]
+                    ),
                     row["同比收入差额"],
                     row["同比支出差额"],
                 ]
@@ -1287,14 +1346,14 @@ def api_export_report():
 
     desktop = Path.home() / "Desktop"
     desktop.mkdir(parents=True, exist_ok=True)
-    filename = (
-        f"财务报表_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}.{ 'xlsx' if fmt == 'excel' else 'pdf'}"
-    )
+    filename = f"财务报表_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}.{ 'xlsx' if fmt == 'excel' else 'pdf'}"
     path = desktop / filename
 
     try:
         if fmt == "excel":
-            create_excel_report(path, recs, monthly_rows, comparison_rows, include_comparison)
+            create_excel_report(
+                path, recs, monthly_rows, comparison_rows, include_comparison
+            )
         else:
             create_pdf_report(
                 path,

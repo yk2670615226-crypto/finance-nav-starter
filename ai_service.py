@@ -93,7 +93,9 @@ class CategoryPredictor:
             try:
                 df = pd.DataFrame(records, columns=["note", "category"])
                 with self._model_lock:
-                    new_vectorizer = CountVectorizer(tokenizer=self._tokenize, token_pattern=None)
+                    new_vectorizer = CountVectorizer(
+                        tokenizer=self._tokenize, token_pattern=None
+                    )
                     new_clf = MultinomialNB()
 
                     features = new_vectorizer.fit_transform(df["note"])
