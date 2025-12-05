@@ -23,12 +23,20 @@ from flask import (
     session,
     url_for,
 )
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+    _REPORTLAB_ERROR = (
+        "未安装 reportlab，无法生成 PDF 报表，请运行 'pip install -r requirements.txt' 后重试。"
+    )
 from sqlalchemy import extract, func
 
 from ai_service import predictor
@@ -1209,6 +1217,9 @@ def api_export_report():
 
     if not start_str or not end_str:
         return jsonify({"success": False, "msg": "请选择报表的开始和结束日期"})
+
+    if fmt == "pdf" and not HAS_REPORTLAB:
+        return jsonify({"success": False, "msg": _REPORTLAB_ERROR})
 
     try:
         start = datetime.strptime(start_str, "%Y-%m-%d").replace(
