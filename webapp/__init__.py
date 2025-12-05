@@ -1,11 +1,14 @@
 import os
+import os
+import platform
+
 from flask import Flask
 from flask_socketio import SocketIO
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.pool import NullPool
 
-from models import Base
+from models import AppSettings, Base, Record, User
 from webapp.config import get_base_path, get_data_path
 
 socketio = SocketIO(cors_allowed_origins="*")
@@ -28,7 +31,26 @@ def create_app() -> Flask:
         poolclass=NullPool,
         future=True,
     )
-    Base.metadata.create_all(engine)
+
+    def ensure_schema() -> None:
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+
+        # 新表创建
+        Base.metadata.create_all(engine)
+
+        with engine.begin() as conn:
+            if "records" in existing_tables:
+                record_cols = {c["name"] for c in inspector.get_columns("records")}
+                if "user_id" not in record_cols:
+                    conn.execute(text("ALTER TABLE records ADD COLUMN user_id INTEGER"))
+
+            if "app_settings" in existing_tables:
+                setting_cols = {c["name"] for c in inspector.get_columns("app_settings")}
+                if "user_id" not in setting_cols:
+                    conn.execute(text("ALTER TABLE app_settings ADD COLUMN user_id INTEGER"))
+
+    ensure_schema()
 
     session_factory = scoped_session(sessionmaker(bind=engine))
     app.config["SessionFactory"] = session_factory

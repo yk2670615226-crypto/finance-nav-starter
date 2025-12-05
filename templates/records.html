@@ -20,9 +20,9 @@
       <button
         type="button"
         class="btn btn-success text-white shadow-sm"
-        onclick="exportToDesktop()"
+        onclick="openExportReport()"
       >
-        <i class="bi bi-file-earmark-excel me-1"></i> 导出
+        <i class="bi bi-file-richtext me-1"></i> 导出报表
       </button>
 
       <a href="{{ url_for('main.index') }}" class="btn btn-secondary shadow-sm">
@@ -250,28 +250,82 @@
 
 {% endblock %}
 
-{% block extra_scripts %}
-  <script>
-    // ===== 导出 Excel =====
-    async function exportToDesktop() {
-      try {
-        const res = await fetch("{{ url_for('main.api_export_excel') }}", {
-          method: "POST",
-        });
-        const data = await res.json();
+  {% block extra_scripts %}
+    <script>
+      // ===== 导出财务报表 =====
+      function openExportReport() {
+        const startFilter = document.getElementById("startDate").value;
+        const endFilter = document.getElementById("endDate").value;
+        const startInput = document.getElementById("reportStartDate");
+        const endInput = document.getElementById("reportEndDate");
 
-        if (data.success) {
-          document.getElementById("exportPathDisplay").textContent = data.path;
-          new bootstrap.Modal(
-            document.getElementById("exportSuccessModal")
-          ).show();
-        } else {
-          alert("导出失败: " + data.msg);
-        }
-      } catch (e) {
-        alert("请求出错: " + e);
+        const today = new Date();
+        const defaultEnd = today.toISOString().split("T")[0];
+        const defaultStartDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+          .toISOString()
+          .split("T")[0];
+
+        startInput.value = startFilter || defaultStartDate;
+        endInput.value = endFilter || defaultEnd;
+
+        new bootstrap.Modal(document.getElementById("exportReportModal")).show();
       }
-    }
+
+      function monthSpan(start, end) {
+        return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
+      }
+
+      async function exportReport() {
+        const startInput = document.getElementById("reportStartDate");
+        const endInput = document.getElementById("reportEndDate");
+        const fmt = document.querySelector('input[name="reportFormat"]:checked')?.value || "excel";
+
+        if (!startInput.value || !endInput.value) {
+          alert("请先选择开始和结束日期");
+          return;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+        if (end < start) {
+          alert("结束日期不能早于开始日期");
+          return;
+        }
+
+        const months = monthSpan(start, end);
+        if (months < 1 || months > 36) {
+          alert("报表时间范围需在 1-36 个月内");
+          return;
+        }
+
+        try {
+          const res = await fetch("{{ url_for('main.api_export_report') }}", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              start_date: startInput.value,
+              end_date: endInput.value,
+              format: fmt,
+            }),
+          });
+          const data = await res.json();
+
+          if (!data.success) {
+            alert(`导出失败：${data.msg}`);
+            return;
+          }
+
+          bootstrap.Modal.getInstance(document.getElementById("exportReportModal"))?.hide();
+          document.getElementById("exportPathDisplay").textContent = data.path;
+          document.getElementById("exportFormatDisplay").textContent =
+            data.format === "pdf"
+              ? "已生成 PDF 报表，包含月度汇总与年度对比（若时间≥12个月）"
+              : "已生成 Excel 报表，包含流水、月度汇总与年度对比";
+          new bootstrap.Modal(document.getElementById("exportSuccessModal")).show();
+        } catch (e) {
+          alert("请求出错: " + e);
+        }
+      }
 
     // ===== 导入数据 =====
     function openImportModal() {
@@ -422,14 +476,15 @@
     }
 
     // 暴露到全局给 HTML onclick 用
-    window.toggleSelectAll = toggleSelectAll;
-    window.triggerSingleDelete = triggerSingleDelete;
-    window.triggerBulkDelete = triggerBulkDelete;
-    window.openEditModal = openEditModal;
-    window.openImportModal = openImportModal;
-    window.startImport = startImport;
-    window.exportToDesktop = exportToDesktop;
-    window.autoSubmit = autoSubmit;
-    window.checkDateAndSubmit = checkDateAndSubmit;
-  </script>
-{% endblock %}
+      window.toggleSelectAll = toggleSelectAll;
+      window.triggerSingleDelete = triggerSingleDelete;
+      window.triggerBulkDelete = triggerBulkDelete;
+      window.openEditModal = openEditModal;
+      window.openImportModal = openImportModal;
+      window.startImport = startImport;
+      window.openExportReport = openExportReport;
+      window.exportReport = exportReport;
+      window.autoSubmit = autoSubmit;
+      window.checkDateAndSubmit = checkDateAndSubmit;
+    </script>
+  {% endblock %}

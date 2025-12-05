@@ -97,6 +97,7 @@
           </a>
 
           <!-- 应用锁：未开启 = unlock，已开启 = lock -->
+          {% if g.user %}
           <button
             type="button"
             class="btn btn-sm btn-outline-light border-0 d-flex align-items-center"
@@ -109,6 +110,21 @@
               {{ '已加锁' if config.enable_lock else '未加锁' }}
             </span>
           </button>
+
+          <div class="dropdown">
+            <button class="btn btn-sm btn-light text-primary fw-bold dropdown-toggle" type="button" data-bs-toggle="dropdown">
+              <i class="bi bi-person-circle me-1"></i>{{ g.user.username }}
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><span class="dropdown-item-text text-muted small">UID: {{ g.user.uid }}</span></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item" href="{{ url_for('main.logout') }}">退出登录</a></li>
+            </ul>
+          </div>
+          {% else %}
+          <a href="{{ url_for('main.login') }}" class="btn btn-sm btn-outline-light">登录</a>
+          <a href="{{ url_for('main.register') }}" class="btn btn-sm btn-light text-primary fw-bold">注册</a>
+          {% endif %}
         </div>
       </div>
     </header>

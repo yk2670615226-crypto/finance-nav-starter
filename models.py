@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from sqlalchemy import Column, Integer, String, Float, Text, Boolean, DateTime, Index
 from sqlalchemy.orm import declarative_base
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +14,8 @@ class AppSettings(Base):
     __tablename__ = "app_settings"
 
     id = Column(Integer, primary_key=True)
+    # 关联用户
+    user_id = Column(Integer, index=True, nullable=True, comment="用户 ID")
     # 月度预算金额
     monthly_budget = Column(Float, default=0.0, comment="月度预算")
     
@@ -41,6 +44,8 @@ class Record(Base):
     __tablename__ = "records"
 
     id = Column(Integer, primary_key=True)
+    # 关联用户
+    user_id = Column(Integer, index=True, nullable=True, comment="用户 ID")
     # 交易时间
     ts = Column(DateTime, index=True, nullable=False, default=datetime.utcnow, comment="交易时间")
     # 金额（保存为正数）
@@ -60,3 +65,24 @@ class Record(Base):
 
 # 复合索引：优化“按类型+时间”的查询性能（如统计月度支出时）
 Index("idx_records_type_ts", Record.type, Record.ts)
+
+
+class User(Base):
+    """用户表。"""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    uid = Column(String(64), unique=True, nullable=False, index=True, comment="登录 UID")
+    username = Column(String(128), nullable=False, comment="自定义用户名")
+    password_hash = Column(String(256), nullable=False, comment="密码哈希")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="注册时间")
+
+    def set_password(self, password: str) -> None:
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        return check_password_hash(self.password_hash, password)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug only
+        return f"<User id={self.id} uid={self.uid}>"

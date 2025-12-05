@@ -124,34 +124,73 @@
 {# =========================
    收支明细：所有弹窗 + 隐藏表单
    ========================= #}
-{% macro records_modals(existing_categories) %}
-  <!-- 导出成功提示弹窗 -->
-  <div class="modal fade" id="exportSuccessModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content border-0 shadow-lg rounded-4">
-        <div class="modal-body p-4 text-center">
-          <div class="mb-3 text-success display-1">
-            <i class="bi bi-check-circle-fill"></i>
+  {% macro records_modals(existing_categories) %}
+    <!-- 导出成功提示弹窗 -->
+    <div class="modal fade" id="exportSuccessModal" tabindex="-1">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+          <div class="modal-body p-4 text-center">
+            <div class="mb-3 text-success display-1">
+              <i class="bi bi-check-circle-fill"></i>
+            </div>
+            <h4 class="fw-bold mb-1">报表导出成功！</h4>
+            <p class="text-muted mb-2">文件已保存到您的桌面：</p>
+            <div
+              class="bg-light p-3 rounded-3 mb-4 text-break font-monospace small"
+              id="exportPathDisplay"
+            >
+              ...
+            </div>
+            <div id="exportFormatDisplay" class="mb-4 small text-muted"></div>
+            <button
+              type="button"
+              class="btn btn-primary px-5 rounded-pill"
+              data-bs-dismiss="modal"
+            >
+              好的
+            </button>
           </div>
-          <h4 class="fw-bold mb-3">导出成功！</h4>
-          <p class="text-muted mb-4">文件已保存到您的桌面：</p>
-          <div
-            class="bg-light p-3 rounded-3 mb-4 text-break font-monospace small"
-            id="exportPathDisplay"
-          >
-            ...
-          </div>
-          <button
-            type="button"
-            class="btn btn-primary px-5 rounded-pill"
-            data-bs-dismiss="modal"
-          >
-            好的
-          </button>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- 导出报表配置弹窗 -->
+    <div class="modal fade" id="exportReportModal" tabindex="-1">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+          <div class="modal-header border-0 pb-0">
+            <h5 class="modal-title fw-bold"><i class="bi bi-file-richtext me-2"></i>导出财务报表</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body p-4">
+            <div class="alert alert-info border-0 bg-info-subtle text-muted small">
+              支持 <strong>1-36 个月</strong> 的时间范围。<br>
+              选择 <strong>≥12 个月</strong> 时将自动附加与上一年同期的年度对比。
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold small text-muted">开始日期</label>
+              <input type="date" class="form-control" id="reportStartDate">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold small text-muted">结束日期</label>
+              <input type="date" class="form-control" id="reportEndDate">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold small text-muted">导出格式</label>
+              <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="reportFormat" id="fmtExcel" value="excel" checked>
+                <label class="btn btn-outline-primary" for="fmtExcel"><i class="bi bi-file-earmark-excel me-1"></i>Excel</label>
+                <input type="radio" class="btn-check" name="reportFormat" id="fmtPdf" value="pdf">
+                <label class="btn btn-outline-primary" for="fmtPdf"><i class="bi bi-filetype-pdf me-1"></i>PDF</label>
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary w-100" onclick="exportReport()">
+              <i class="bi bi-cloud-arrow-down me-1"></i> 开始导出
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
   <!-- 导入账单弹窗 -->
   <div class="modal fade" id="importModal" tabindex="-1">
