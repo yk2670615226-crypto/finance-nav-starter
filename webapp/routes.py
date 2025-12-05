@@ -159,11 +159,8 @@ def get_settings(db_session, user_id: int | None):
 
     cfg = db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
     if not cfg:
-        cfg = AppSettings(
-            user_id=user_id, monthly_budget=8000.0, enable_lock=False, is_demo=False
-        )
-        db_session.add(cfg)
-        db_session.commit()
+        generate_demo_data(db_session, user_id)
+        cfg = db_session.query(AppSettings).filter(AppSettings.user_id == user_id).first()
     return cfg
 
 
@@ -351,6 +348,53 @@ def do_register():
 def logout():
     session.clear()
     return redirect(url_for("main.login"))
+
+
+@bp.post("/profile/update_username")
+def update_username():
+    new_username = (request.form.get("username") or "").strip()
+    if not new_username:
+        flash("用户名不能为空", "warning")
+        return redirect(request.referrer or url_for("main.index"))
+
+    with get_db_session() as db_session:
+        user = db_session.get(User, g.user_id)
+        if not user:
+            flash("用户不存在", "danger")
+            return redirect(url_for("main.login"))
+
+        user.username = new_username
+        db_session.commit()
+        session["username"] = new_username
+
+    flash("用户名已更新", "success")
+    return redirect(request.referrer or url_for("main.index"))
+
+
+@bp.post("/profile/update_password")
+def update_password():
+    current_password = (request.form.get("current_password") or "").strip()
+    new_password = (request.form.get("new_password") or "").strip()
+
+    if not current_password or not new_password:
+        flash("请输入当前密码和新密码", "warning")
+        return redirect(request.referrer or url_for("main.index"))
+
+    with get_db_session() as db_session:
+        user = db_session.get(User, g.user_id)
+        if not user:
+            flash("用户不存在", "danger")
+            return redirect(url_for("main.login"))
+
+        if not user.check_password(current_password):
+            flash("当前密码不正确", "danger")
+            return redirect(request.referrer or url_for("main.index"))
+
+        user.set_password(new_password)
+        db_session.commit()
+
+    flash("密码已更新", "success")
+    return redirect(request.referrer or url_for("main.index"))
 
 
 @bp.route("/lock")
