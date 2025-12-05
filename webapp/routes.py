@@ -495,6 +495,9 @@ def api_update_budget():
     except (TypeError, ValueError):
         return jsonify({"success": False, "error": "预算格式不正确"})
 
+    if val < 0:
+        return jsonify({"success": False, "error": "预算不能为负数"})
+
     with get_db_session() as db_session:
         cfg = get_settings(db_session)
         cfg.monthly_budget = val
@@ -687,6 +690,8 @@ def api_export_excel():
         desktop = Path.home() / "Desktop"
         name = f"账单备份_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         path = desktop / name
+
+        desktop.mkdir(parents=True, exist_ok=True)
 
         data = [
             {
