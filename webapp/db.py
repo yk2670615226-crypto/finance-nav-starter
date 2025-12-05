@@ -1,8 +1,12 @@
+import threading
 from contextlib import contextmanager
 from typing import Generator
 
 from flask import current_app
 from sqlalchemy.orm import Session as OrmSession
+
+
+db_write_lock = threading.RLock()
 
 
 @contextmanager

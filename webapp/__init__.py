@@ -1,6 +1,6 @@
 import os
-import os
 import platform
+import secrets
 
 from flask import Flask
 from flask_socketio import SocketIO
@@ -14,6 +14,18 @@ from webapp.config import get_base_path, get_data_path
 socketio = SocketIO(cors_allowed_origins="*")
 
 
+def load_or_create_secret_key(data_dir) -> str:
+    key_path = data_dir / "secret.key"
+    if key_path.exists():
+        existing = key_path.read_text().strip()
+        if existing:
+            return existing
+
+    key = secrets.token_hex(24)
+    key_path.write_text(key)
+    return key
+
+
 def create_app() -> Flask:
     base_dir = get_base_path()
     data_dir = get_data_path()
@@ -23,7 +35,7 @@ def create_app() -> Flask:
     static_dir = base_dir / "static"
 
     app = Flask(__name__, template_folder=str(template_dir), static_folder=str(static_dir))
-    app.config["SECRET_KEY"] = os.urandom(24).hex()
+    app.config["SECRET_KEY"] = load_or_create_secret_key(data_dir)
     print(f"数据库路径: {db_path}")
 
     engine = create_engine(
