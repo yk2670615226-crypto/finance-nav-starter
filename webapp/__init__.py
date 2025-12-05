@@ -1,3 +1,5 @@
+"""Flask 应用初始化与数据库 Schema 管理。"""
+
 import os
 import platform
 import secrets
@@ -15,6 +17,7 @@ socketio = SocketIO(cors_allowed_origins="*")
 
 
 def load_or_create_secret_key(data_dir) -> str:
+    """生成或加载应用的密钥文件，确保重启后会话保持。"""
     key_path = data_dir / "secret.key"
     if key_path.exists():
         existing = key_path.read_text().strip()
@@ -27,6 +30,7 @@ def load_or_create_secret_key(data_dir) -> str:
 
 
 def create_app() -> Flask:
+    """构建 Flask 应用并初始化数据库与蓝图。"""
     base_dir = get_base_path()
     data_dir = get_data_path()
     db_path = data_dir / "finance.db"
@@ -34,7 +38,9 @@ def create_app() -> Flask:
     template_dir = base_dir / "templates"
     static_dir = base_dir / "static"
 
-    app = Flask(__name__, template_folder=str(template_dir), static_folder=str(static_dir))
+    app = Flask(
+        __name__, template_folder=str(template_dir), static_folder=str(static_dir)
+    )
     app.config["SECRET_KEY"] = load_or_create_secret_key(data_dir)
     print(f"数据库路径: {db_path}")
 
@@ -45,10 +51,10 @@ def create_app() -> Flask:
     )
 
     def ensure_schema() -> None:
+        """创建或升级数据库表结构，保证旧版本数据可用。"""
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
 
-        # 新表创建
         Base.metadata.create_all(engine)
 
         with engine.begin() as conn:
@@ -64,9 +70,13 @@ def create_app() -> Flask:
                     )
 
             if "app_settings" in existing_tables:
-                setting_cols = {c["name"] for c in inspector.get_columns("app_settings")}
+                setting_cols = {
+                    c["name"] for c in inspector.get_columns("app_settings")
+                }
                 if "user_id" not in setting_cols:
-                    conn.execute(text("ALTER TABLE app_settings ADD COLUMN user_id INTEGER"))
+                    conn.execute(
+                        text("ALTER TABLE app_settings ADD COLUMN user_id INTEGER")
+                    )
 
     ensure_schema()
 
