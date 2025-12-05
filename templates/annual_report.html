@@ -22,7 +22,7 @@
 
     {# 固定在左上方的返回按钮（样式在 layout 的 .page-back-btn） #}
     <a
-        href="{{ url_for('index') }}"
+        href="{{ url_for('main.index') }}"
         class="btn btn-light rounded-circle shadow-sm page-back-btn"
         aria-label="返回首页"
     >
@@ -45,10 +45,10 @@
                 {{ year }} 年总支出
             </span>
             <div class="btn-group">
-                <a href="{{ url_for('annual_report', year=year-1) }}" class="btn btn-sm btn-light rounded-pill border-0 me-1">
+                <a href="{{ url_for('main.annual_report', year=year-1) }}" class="btn btn-sm btn-light rounded-pill border-0 me-1">
                     <i class="bi bi-chevron-left"></i> {{ year-1 }}
                 </a>
-                <a href="{{ url_for('annual_report', year=year+1) }}" class="btn btn-sm btn-light rounded-pill border-0">
+                <a href="{{ url_for('main.annual_report', year=year+1) }}" class="btn btn-sm btn-light rounded-pill border-0">
                     {{ year+1 }} <i class="bi bi-chevron-right"></i>
                 </a>
             </div>

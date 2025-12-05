@@ -81,7 +81,7 @@
     <!-- 顶部导航 -->
     <header class="navbar navbar-expand-lg navbar-dark mb-4 py-3 sticky-top">
       <div class="container">
-        <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('index') }}">
+        <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('main.index') }}">
           <i class="bi bi-wallet-fill me-2"></i>
           <span>个人记账系统 Pro</span>
         </a>
@@ -89,7 +89,7 @@
         <div class="ms-auto d-flex gap-2 align-items-center">
           <!-- 年度统计 -->
           <a
-            href="{{ url_for('annual_report') }}"
+            href="{{ url_for('main.annual_report') }}"
             class="btn btn-sm btn-light text-primary fw-bold d-flex align-items-center"
           >
             <i class="bi bi-file-earmark-bar-graph me-1"></i>
@@ -149,7 +149,7 @@
             </p>
 
             <!-- 开启 / 修改密码 -->
-            <form method="post" action="{{ url_for('lock_update') }}">
+            <form method="post" action="{{ url_for('main.lock_update') }}">
               <input type="hidden" name="action" value="lock_enable">
               <div class="mb-3">
                 <input
@@ -167,7 +167,7 @@
 
             {% if config.enable_lock %}
             <!-- 关闭应用锁 -->
-            <form method="post" action="{{ url_for('lock_update') }}">
+            <form method="post" action="{{ url_for('main.lock_update') }}">
               <input type="hidden" name="action" value="lock_disable">
               <button type="submit" class="btn btn-outline-danger w-100 rounded-pill py-2">
                 关闭应用锁

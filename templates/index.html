@@ -30,7 +30,7 @@
             >
               否
             </button>
-            <form method="post" action="{{ url_for('exit_demo') }}">
+            <form method="post" action="{{ url_for('main.exit_demo') }}">
               <button type="submit" class="btn btn-primary px-4">
                 是
               </button>
@@ -52,7 +52,7 @@
               <div class="ms-auto text-muted small"><i class="bi bi-keyboard"></i> 快捷键: Ctrl+Enter 保存</div>
           </div>
           
-          <form method="post" action="{{ url_for('records_new') }}" id="recordForm" class="row g-3 align-items-end">
+          <form method="post" action="{{ url_for('main.records_new') }}" id="recordForm" class="row g-3 align-items-end">
             <input type="hidden" name="category" id="manualCategoryInput">
             <div class="col-3 col-md-2">
               <select name="type" class="form-select bg-light border-0 fw-bold text-center py-2" required>
@@ -103,7 +103,7 @@
                 <div class="mt-2" id="sum-status" onclick="quickSetBudget()"></div>
                 
                 <div class="mt-4">
-                    <a href="{{ url_for('records_page') }}" class="btn btn-sm btn-outline-primary rounded-pill px-4 fw-bold border-2 hover-shadow">
+                    <a href="{{ url_for('main.records_page') }}" class="btn btn-sm btn-outline-primary rounded-pill px-4 fw-bold border-2 hover-shadow">
                         <i class="bi bi-receipt-cutoff me-1"></i> 收支明细
                     </a>
                 </div>
@@ -323,7 +323,7 @@
       }
 
       try {
-        const res = await fetch("{{ url_for('api_predict') }}", {
+        const res = await fetch("{{ url_for('main.api_predict') }}", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({note: note})
@@ -353,7 +353,7 @@
         const val = document.getElementById('quickBudgetInput').value;
         if (!val) return;
         try {
-          const res = await fetch("{{ url_for('api_update_budget') }}", {
+          const res = await fetch("{{ url_for('main.api_update_budget') }}", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({budget: val})
@@ -369,7 +369,7 @@
     }
 
     async function loadSummary(dateStr) { 
-        const res = await fetch(`{{ url_for('api_summary') }}?date=${dateStr}&t=${Date.now()}`); 
+        const res = await fetch(`{{ url_for('main.api_summary') }}?date=${dateStr}&t=${Date.now()}`);
         const data = await res.json(); 
         document.getElementById('sum-spent').textContent = "¥" + data.display_spent; 
         document.getElementById('sum-budget').textContent = "¥" + data.display_budget; 
@@ -381,7 +381,7 @@
     async function loadPie(dateStr) {
       const el = document.getElementById('pie');
       if(!el) return;
-      const res = await fetch(`{{ url_for('api_stats_category') }}?date=${dateStr}&t=${Date.now()}`);
+      const res = await fetch(`{{ url_for('main.api_stats_category') }}?date=${dateStr}&t=${Date.now()}`);
       const data = await res.json();
       const chart = echarts.init(el);
       chart.setOption({
@@ -406,7 +406,7 @@
     async function loadTrend(dateStr, mode) {
       const el = document.getElementById('trendChart');
       if(!el) return;
-      const res = await fetch(`{{ url_for('api_stats_trend') }}?date=${dateStr}&mode=${mode}&t=${Date.now()}`);
+      const res = await fetch(`{{ url_for('main.api_stats_trend') }}?date=${dateStr}&mode=${mode}&t=${Date.now()}`);
       const data = await res.json();
 
       if(trendChartInstance) trendChartInstance.dispose();
