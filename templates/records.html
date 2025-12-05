@@ -25,7 +25,7 @@
         <i class="bi bi-file-earmark-excel me-1"></i> 导出
       </button>
 
-      <a href="{{ url_for('index') }}" class="btn btn-secondary shadow-sm">
+      <a href="{{ url_for('main.index') }}" class="btn btn-secondary shadow-sm">
         <i class="bi bi-arrow-return-left me-1"></i> 返回
       </a>
     </div>
@@ -36,7 +36,7 @@
     <div class="card-body p-4">
       <form
         method="get"
-        action="{{ url_for('records_page') }}"
+        action="{{ url_for('main.records_page') }}"
         id="filterForm"
         class="row g-3"
       >
@@ -143,7 +143,7 @@
     <div class="card-body p-0">
       <form
         method="post"
-        action="{{ url_for('records_delete') }}"
+        action="{{ url_for('main.records_delete') }}"
         id="deleteForm"
       >
         <!-- 顶部操作栏：全选 + 批量删除 + 总数 -->
@@ -219,7 +219,7 @@
           <li class="page-item {{ 'disabled' if current_page == 1 }}">
             <a
               class="page-link border-0 text-secondary"
-              href="{{ url_for('records_page', page=current_page-1, **query_params) if current_page > 1 else '#' }}"
+              href="{{ url_for('main.records_page', page=current_page-1, **query_params) if current_page > 1 else '#' }}"
             >
               <i class="bi bi-chevron-left"></i>
             </a>
@@ -234,7 +234,7 @@
           <li class="page-item {{ 'disabled' if current_page == total_pages }}">
             <a
               class="page-link border-0 text-secondary"
-              href="{{ url_for('records_page', page=current_page+1, **query_params) if current_page < total_pages else '#' }}"
+              href="{{ url_for('main.records_page', page=current_page+1, **query_params) if current_page < total_pages else '#' }}"
             >
               <i class="bi bi-chevron-right"></i>
             </a>
@@ -255,7 +255,7 @@
     // ===== 导出 Excel =====
     async function exportToDesktop() {
       try {
-        const res = await fetch("{{ url_for('api_export_excel') }}", {
+        const res = await fetch("{{ url_for('main.api_export_excel') }}", {
           method: "POST",
         });
         const data = await res.json();
@@ -294,7 +294,7 @@
       const formData = new FormData(document.getElementById("importForm"));
 
       try {
-        const res = await fetch("{{ url_for('api_import_data') }}", {
+        const res = await fetch("{{ url_for('main.api_import_data') }}", {
           method: "POST",
           body: formData,
         });

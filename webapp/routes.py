@@ -142,6 +142,22 @@ def get_settings(db_session):
     return cfg
 
 
+def get_budget_status(total: float, budget: float) -> Tuple[str, str]:
+    st_text = "预算正常"
+    st_cls = "badge bg-success-subtle text-success border-success-subtle"
+
+    if budget > 0:
+        pct = (total / budget) * 100
+        if pct >= 100:
+            st_text, st_cls = "已超支！", "badge bg-danger-subtle text-danger border-danger-subtle"
+        elif pct >= 80:
+            st_text, st_cls = "预警", "badge bg-warning-subtle text-warning border-warning-subtle"
+    else:
+        st_text, st_cls = "未设预算", "badge bg-light text-primary border-primary border-dashed"
+
+    return st_text, st_cls
+
+
 @bp.app_context_processor
 def inject_config():
     with get_db_session() as db_session:
@@ -571,17 +587,39 @@ def api_stats_category():
         cfg = get_settings(db_session)
         bg = cfg.monthly_budget
 
-    st_text = "预算正常"
-    st_cls = "badge bg-success-subtle text-success border-success-subtle"
+    st_text, st_cls = get_budget_status(total, bg)
 
-    if bg > 0:
-        pct = (total / bg) * 100
-        if pct >= 100:
-            st_text, st_cls = "已超支！", "badge bg-danger-subtle text-danger border-danger-subtle"
-        elif pct >= 80:
-            st_text, st_cls = "预警", "badge bg-warning-subtle text-warning border-warning-subtle"
-    else:
-        st_text, st_cls = "未设预算", "badge bg-light text-primary border-primary border-dashed"
+    return jsonify(
+        {
+            "display_spent": f"{total:.2f}",
+            "display_budget": f"{bg:.2f}" if bg > 0 else "/",
+            "status_text": st_text,
+            "status_class": st_cls,
+            "date_title": f"{target.year}年{target.month}月",
+        }
+    )
+
+
+@bp.route("/api/summary")
+def api_summary():
+    try:
+        target = datetime.strptime(request.args.get("date", ""), "%Y-%m")
+    except ValueError:
+        target = datetime.now()
+
+    start, end = get_month_range(target)
+
+    with get_db_session() as db_session:
+        total = (
+            db_session.query(func.sum(Record.amount))
+            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
+            .scalar()
+            or 0.0
+        )
+        cfg = get_settings(db_session)
+        bg = cfg.monthly_budget
+
+    st_text, st_cls = get_budget_status(total, bg)
 
     return jsonify(
         {
