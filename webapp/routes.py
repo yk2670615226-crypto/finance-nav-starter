@@ -43,6 +43,7 @@ MAX_IMPORT_SIZE = 5 * 1024 * 1024  # 5MB
 MAX_EXPORT_ROWS = 50000
 MIN_REPORT_MONTHS = 1
 MAX_REPORT_MONTHS = 36
+TRAIN_DEBOUNCE_SECONDS = 60
 
 AUTH_FREE_ENDPOINTS = {
     "main.login",
@@ -51,6 +52,9 @@ AUTH_FREE_ENDPOINTS = {
     "main.do_register",
     "static",
 }
+
+_train_timer: threading.Timer | None = None
+_train_lock = threading.Lock()
 
 
 def get_month_range(target_date: datetime) -> Tuple[datetime, datetime]:
@@ -70,6 +74,21 @@ def train_model_async() -> None:
                     print(f"后台训练失败: {exc}")
 
     threading.Thread(target=_train_task, daemon=True).start()
+
+
+def schedule_model_training() -> None:
+    """Debounce model training to reduce repeated work under frequent edits."""
+
+    def _schedule():
+        train_model_async()
+
+    global _train_timer
+    with _train_lock:
+        if _train_timer and _train_timer.is_alive():
+            _train_timer.cancel()
+        _train_timer = threading.Timer(TRAIN_DEBOUNCE_SECONDS, _schedule)
+        _train_timer.daemon = True
+        _train_timer.start()
 
 
 def generate_demo_data(
@@ -163,7 +182,7 @@ def _generate_demo_data(
     cfg.is_demo = True
     session_obj.commit()
 
-    train_model_async()
+    schedule_model_training()
 
 
 def get_settings(db_session, user_id: int | None):
@@ -524,7 +543,7 @@ def exit_demo():
                 cfg.is_demo = False
                 cfg.monthly_budget = 0
                 db_session.commit()
-            train_model_async()
+            schedule_model_training()
             socketio.emit("update_pie")
     return redirect(url_for("main.index"))
 
@@ -718,7 +737,7 @@ def records_new():
             db_session.commit()
 
     if rtype == "expense":
-        train_model_async()
+        schedule_model_training()
 
     socketio.emit("update_pie")
     return redirect(url_for("main.index", saved="1"))
@@ -757,7 +776,7 @@ def records_update():
             db_session.commit()
 
         if rec.type == "expense":
-            train_model_async()
+            schedule_model_training()
         socketio.emit("update_pie")
     return redirect(url_for("main.records_page"))
 
@@ -776,7 +795,7 @@ def records_delete():
             ).delete(synchronize_session=False)
             db_session.commit()
 
-    train_model_async()
+    schedule_model_training()
     socketio.emit("update_pie")
     return redirect(url_for("main.records_page"))
 
@@ -997,7 +1016,7 @@ def api_import_data():
                 db_session.add_all(recs)
                 db_session.commit()
 
-        train_model_async()
+            schedule_model_training()
         socketio.emit("update_pie")
         return jsonify({"success": True, "count": len(recs)})
 

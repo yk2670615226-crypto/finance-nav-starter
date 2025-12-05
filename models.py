@@ -47,7 +47,7 @@ class Record(Base):
     # 关联用户
     user_id = Column(Integer, index=True, nullable=True, comment="用户 ID")
     # 交易时间
-    ts = Column(DateTime, index=True, nullable=False, default=datetime.utcnow, comment="交易时间")
+    ts = Column(DateTime, index=True, nullable=False, default=datetime.now, comment="交易时间")
     # 金额（保存为正数）
     amount = Column(Float, nullable=False, comment="金额")
     # 类型：'income' (收入) / 'expense' (支出)
@@ -57,7 +57,7 @@ class Record(Base):
     # 备注说明
     note = Column(Text, default="", comment="备注")
     # 记录创建时间（系统时间）
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    created_at = Column(DateTime, default=datetime.now, comment="创建时间")
 
     def __repr__(self) -> str:
         return f"<Record id={self.id} ts={self.ts} amount={self.amount} type={self.type} cat={self.category}>"
@@ -76,7 +76,7 @@ class User(Base):
     uid = Column(String(64), unique=True, nullable=False, index=True, comment="登录 UID")
     username = Column(String(128), nullable=False, comment="自定义用户名")
     password_hash = Column(String(256), nullable=False, comment="密码哈希")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="注册时间")
+    created_at = Column(DateTime, default=datetime.now, nullable=False, comment="注册时间")
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
