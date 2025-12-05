@@ -92,15 +92,14 @@ class CategoryPredictor:
 
             try:
                 df = pd.DataFrame(records, columns=["note", "category"])
-
-                new_vectorizer = CountVectorizer(tokenizer=self._tokenize, token_pattern=None)
-                new_clf = MultinomialNB()
-
-                features = new_vectorizer.fit_transform(df["note"])
-                labels = df["category"]
-                new_clf.fit(features, labels)
-
                 with self._model_lock:
+                    new_vectorizer = CountVectorizer(tokenizer=self._tokenize, token_pattern=None)
+                    new_clf = MultinomialNB()
+
+                    features = new_vectorizer.fit_transform(df["note"])
+                    labels = df["category"]
+                    new_clf.fit(features, labels)
+
                     self.vectorizer = new_vectorizer
                     self.clf = new_clf
                     self.is_trained = True
@@ -116,11 +115,8 @@ class CategoryPredictor:
         if self.is_trained:
             try:
                 with self._model_lock:
-                    vec_snapshot = self.vectorizer
-                    clf_snapshot = self.clf
-
-                X = vec_snapshot.transform([text])
-                return clf_snapshot.predict(X)[0]
+                    X = self.vectorizer.transform([text])
+                    return self.clf.predict(X)[0]
             except Exception:
                 pass
 
