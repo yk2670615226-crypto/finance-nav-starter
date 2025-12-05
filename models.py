@@ -56,6 +56,8 @@ class Record(Base):
     category = Column(String(64), index=True, default="其他", comment="分类")
     # 备注说明
     note = Column(Text, default="", comment="备注")
+    # 是否演示数据
+    is_demo = Column(Boolean, default=False, nullable=False, comment="是否演示数据")
     # 记录创建时间（系统时间）
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
 
