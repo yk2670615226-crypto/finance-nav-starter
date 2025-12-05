@@ -13,6 +13,7 @@ from typing import Tuple
 import pandas as pd
 from flask import (
     Blueprint,
+    Flask,
     current_app,
     flash,
     g,
@@ -51,7 +52,7 @@ MAX_IMPORT_SIZE = 5 * 1024 * 1024  # 5MB
 MAX_EXPORT_ROWS = 50000
 MIN_REPORT_MONTHS = 1
 MAX_REPORT_MONTHS = 36
-TRAIN_DEBOUNCE_SECONDS = 60
+TRAIN_DEBOUNCE_SECONDS = 30
 
 AUTH_FREE_ENDPOINTS = {
     "main.login",
@@ -72,10 +73,10 @@ def get_month_range(target_date: datetime) -> Tuple[datetime, datetime]:
     return start, end
 
 
-def train_model_async() -> None:
+def train_model_async(app: Flask) -> None:
     def _train_task():
-        with current_app.app_context():
-            with get_db_session(current_app) as db_session:
+        with app.app_context():
+            with get_db_session(app) as db_session:
                 try:
                     predictor.train(db_session)
                 except Exception as exc:  # pragma: no cover - logging only
@@ -87,8 +88,10 @@ def train_model_async() -> None:
 def schedule_model_training() -> None:
     """Debounce model training to reduce repeated work under frequent edits."""
 
+    app = current_app._get_current_object()
+
     def _schedule():
-        train_model_async()
+        train_model_async(app)
 
     global _train_timer
     with _train_lock:
