@@ -1,6 +1,3 @@
-import threading
-from typing import Optional
-
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
@@ -11,23 +8,18 @@ from models import Record
 
 class CategoryPredictor:
     """
-    智能分类预测器。
-    
-    机制：
-    1. 优先使用朴素贝叶斯模型根据历史备注进行预测。
-    2. 如果模型未就绪或预测失败，回退到关键字规则匹配。
+    记账分类预测器：
+    - 优先使用基于历史记录训练的朴素贝叶斯模型
+    - 当样本不足或模型不可用时，退回到简单关键字规则
     """
 
     def __init__(self) -> None:
-        # 简单的分词模式，支持中文
+        # 朴素贝叶斯文本分类器
         self.vectorizer = CountVectorizer(token_pattern=r"(?u)\b\w+\b")
         self.clf = MultinomialNB()
         self.is_trained: bool = False
-        
-        # 线程锁，确保训练过程不会被并发打断
-        self._train_lock = threading.Lock()
 
-        # 兜底规则表
+        # 关键字规则（兜底逻辑）
         self.rules: dict[str, str] = {
             "饭": "餐饮", "餐": "餐饮", "吃": "餐饮", "KFC": "餐饮", "麦当劳": "餐饮", "饿了么": "餐饮", "美团": "餐饮",
             "车": "交通", "油": "交通", "铁": "交通", "票": "交通", "滴滴": "交通",
@@ -37,41 +29,39 @@ class CategoryPredictor:
             "玩": "娱乐", "游": "娱乐", "影": "娱乐", "剧": "娱乐", "会员": "娱乐",
         }
 
-    def train(self, db_session: Session, _user_id: Optional[int] = None) -> None:
+    def train(self, db_session: Session, _user_id=None) -> None:
         """
-        从数据库加载数据并训练模型。
-        建议在后台线程中调用。
-        """
-        # 如果当前正在训练，直接跳过本次请求，避免资源竞争
-        if self._train_lock.locked():
-            return
+        使用历史支出记录训练分类模型。
 
-        with self._train_lock:
-            # 仅使用有备注且为支出的记录进行训练
-            records = (
-                db_session.query(Record.note, Record.category)
-                .filter(
-                    Record.note != "",
-                    Record.note.isnot(None),
-                    Record.type == "expense",
-                )
-                .all()
+        说明：
+        - 单用户模式，不使用 user_id，仅保留参数以兼容现有调用。
+        - 只使用有备注的支出记录（type='expense' 且 note 非空）。
+        - 样本少于 3 条时不训练模型，仅使用规则兜底。
+        """
+        records = (
+            db_session.query(Record.note, Record.category)
+            .filter(
+                Record.note != "",
+                Record.note.isnot(None),
+                Record.type == "expense",
             )
+            .all()
+        )
 
             # 样本太少时不训练
-            if len(records) < 3:
+if len(records) < 3:
                 self.is_trained = False
                 return
 
-            try:
-                df = pd.DataFrame(records, columns=["note", "category"])
-                features = self.vectorizer.fit_transform(df["note"])
-                labels = df["category"]
-                self.clf.fit(features, labels)
-                self.is_trained = True
-            except Exception:
-                # 训练出错（如数据格式问题）则回退状态
-                self.is_trained = False
+        df = pd.DataFrame(records, columns=["note", "category"])
+        try:
+            X = self.vectorizer.fit_transform(df["note"])
+            y = df["category"]
+            self.clf.fit(X, y)
+            self.is_trained = True
+        except Exception:
+            # 出现异常时关闭模型使用，退回规则模式
+            self.is_trained = False
 
     def predict(self, note: str) -> str:
         """
