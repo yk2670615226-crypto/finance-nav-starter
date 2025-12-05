@@ -23,13 +23,19 @@ from flask import (
     session,
     url_for,
 )
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import extract, func
 
 from ai_service import predictor
 from models import AppSettings, Record, User
 from webapp import socketio
 from webapp.config import get_data_path
-from webapp.db import get_db_session
+from webapp.db import db_write_lock, get_db_session
 
 bp = Blueprint("main", __name__)
 
@@ -67,6 +73,13 @@ def train_model_async() -> None:
 
 
 def generate_demo_data(
+    session_obj, user_id: int, target_records: int = 10000, years: int = 10
+) -> None:
+    with db_write_lock:
+        _generate_demo_data(session_obj, user_id, target_records, years)
+
+
+def _generate_demo_data(
     session_obj, user_id: int, target_records: int = 10000, years: int = 10
 ) -> None:
     categories = {
@@ -325,21 +338,22 @@ def do_register():
         return redirect(url_for("main.register"))
 
     with get_db_session() as db_session:
-        exists = db_session.query(User).filter(User.uid == uid).first()
-        if exists:
-            flash("UID 已被占用，请更换", "danger")
-            return redirect(url_for("main.register"))
+        with db_write_lock:
+            exists = db_session.query(User).filter(User.uid == uid).first()
+            if exists:
+                flash("UID 已被占用，请更换", "danger")
+                return redirect(url_for("main.register"))
 
-        user = User(uid=uid, username=username)
-        user.set_password(password)
-        db_session.add(user)
-        db_session.commit()
+            user = User(uid=uid, username=username)
+            user.set_password(password)
+            db_session.add(user)
+            db_session.commit()
 
-        # 初始化用户配置
-        get_settings(db_session, user.id)
+            # 初始化用户配置
+            get_settings(db_session, user.id)
 
-        session["user_id"] = user.id
-        session["username"] = user.username
+            session["user_id"] = user.id
+            session["username"] = user.username
 
     return redirect(url_for("main.index"))
 
@@ -358,14 +372,15 @@ def update_username():
         return redirect(request.referrer or url_for("main.index"))
 
     with get_db_session() as db_session:
-        user = db_session.get(User, g.user_id)
-        if not user:
-            flash("用户不存在", "danger")
-            return redirect(url_for("main.login"))
+        with db_write_lock:
+            user = db_session.get(User, g.user_id)
+            if not user:
+                flash("用户不存在", "danger")
+                return redirect(url_for("main.login"))
 
-        user.username = new_username
-        db_session.commit()
-        session["username"] = new_username
+            user.username = new_username
+            db_session.commit()
+            session["username"] = new_username
 
     flash("用户名已更新", "success")
     return redirect(request.referrer or url_for("main.index"))
@@ -381,17 +396,18 @@ def update_password():
         return redirect(request.referrer or url_for("main.index"))
 
     with get_db_session() as db_session:
-        user = db_session.get(User, g.user_id)
-        if not user:
-            flash("用户不存在", "danger")
-            return redirect(url_for("main.login"))
+        with db_write_lock:
+            user = db_session.get(User, g.user_id)
+            if not user:
+                flash("用户不存在", "danger")
+                return redirect(url_for("main.login"))
 
-        if not user.check_password(current_password):
-            flash("当前密码不正确", "danger")
-            return redirect(request.referrer or url_for("main.index"))
+            if not user.check_password(current_password):
+                flash("当前密码不正确", "danger")
+                return redirect(request.referrer or url_for("main.index"))
 
-        user.set_password(new_password)
-        db_session.commit()
+            user.set_password(new_password)
+            db_session.commit()
 
     flash("密码已更新", "success")
     return redirect(request.referrer or url_for("main.index"))
@@ -427,20 +443,21 @@ def lock_update():
     with get_db_session() as db_session:
         cfg = get_settings(db_session, g.user_id)
 
-        if action == "lock_enable":
-            pwd = data.get("password", "").strip()
-            if pwd:
-                cfg.set_lock_password(pwd)
-                cfg.enable_lock = True
+        with db_write_lock:
+            if action == "lock_enable":
+                pwd = data.get("password", "").strip()
+                if pwd:
+                    cfg.set_lock_password(pwd)
+                    cfg.enable_lock = True
+                    db_session.commit()
+                    flash("已开启应用锁", "success")
+                else:
+                    flash("密码不能为空", "danger")
+            elif action == "lock_disable":
+                cfg.enable_lock = False
                 db_session.commit()
-                flash("已开启应用锁", "success")
-            else:
-                flash("密码不能为空", "danger")
-        elif action == "lock_disable":
-            cfg.enable_lock = False
-            db_session.commit()
-            session.pop("unlocked_user_id", None)
-            flash("已关闭应用锁", "success")
+                session.pop("unlocked_user_id", None)
+                flash("已关闭应用锁", "success")
     return redirect(request.referrer or url_for("main.index"))
 
 
@@ -500,12 +517,13 @@ def exit_demo():
     with get_db_session() as db_session:
         cfg = get_settings(db_session, g.user_id)
         if cfg.is_demo:
-            db_session.query(Record).filter(Record.user_id == g.user_id).delete(
-                synchronize_session=False
-            )
-            cfg.is_demo = False
-            cfg.monthly_budget = 0
-            db_session.commit()
+            with db_write_lock:
+                db_session.query(Record).filter(Record.user_id == g.user_id).delete(
+                    synchronize_session=False
+                )
+                cfg.is_demo = False
+                cfg.monthly_budget = 0
+                db_session.commit()
             train_model_async()
             socketio.emit("update_pie")
     return redirect(url_for("main.index"))
@@ -686,17 +704,18 @@ def records_new():
     cat = "收入" if rtype == "income" else (manual_cat if manual_cat else predictor.predict(note))
 
     with get_db_session() as db_session:
-        db_session.add(
-            Record(
-                ts=datetime.now(),
-                amount=amount,
-                type=rtype,
-                category=cat,
-                note=note,
-                user_id=g.user_id,
+        with db_write_lock:
+            db_session.add(
+                Record(
+                    ts=datetime.now(),
+                    amount=amount,
+                    type=rtype,
+                    category=cat,
+                    note=note,
+                    user_id=g.user_id,
+                )
             )
-        )
-        db_session.commit()
+            db_session.commit()
 
     if rtype == "expense":
         train_model_async()
@@ -723,18 +742,19 @@ def records_update():
             flash("记录不存在", "warning")
             return redirect(url_for("main.records_page"))
 
-        try:
-            amount_val = float(request.form.get("amount", rec.amount))
-            if amount_val <= 0:
-                raise ValueError
-            rec.amount = amount_val
-        except (TypeError, ValueError):
-            flash("金额格式不正确", "danger")
-            return redirect(url_for("main.records_page"))
+        with db_write_lock:
+            try:
+                amount_val = float(request.form.get("amount", rec.amount))
+                if amount_val <= 0:
+                    raise ValueError
+                rec.amount = amount_val
+            except (TypeError, ValueError):
+                flash("金额格式不正确", "danger")
+                return redirect(url_for("main.records_page"))
 
-        rec.category = (request.form.get("category", "") or "").strip()
-        rec.note = (request.form.get("note", "") or "").strip()
-        db_session.commit()
+            rec.category = (request.form.get("category", "") or "").strip()
+            rec.note = (request.form.get("note", "") or "").strip()
+            db_session.commit()
 
         if rec.type == "expense":
             train_model_async()
@@ -750,10 +770,11 @@ def records_delete():
         return redirect(url_for("main.records_page"))
 
     with get_db_session() as db_session:
-        db_session.query(Record).filter(
-            Record.user_id == g.user_id, Record.id.in_(ids)
-        ).delete(synchronize_session=False)
-        db_session.commit()
+        with db_write_lock:
+            db_session.query(Record).filter(
+                Record.user_id == g.user_id, Record.id.in_(ids)
+            ).delete(synchronize_session=False)
+            db_session.commit()
 
     train_model_async()
     socketio.emit("update_pie")
@@ -777,9 +798,10 @@ def api_update_budget():
         return jsonify({"success": False, "error": "预算不能为负数"})
 
     with get_db_session() as db_session:
-        cfg = get_settings(db_session, g.user_id)
-        cfg.monthly_budget = val
-        db_session.commit()
+        with db_write_lock:
+            cfg = get_settings(db_session, g.user_id)
+            cfg.monthly_budget = val
+            db_session.commit()
 
     socketio.emit("update_pie")
     return jsonify({"success": True})
@@ -971,8 +993,9 @@ def api_import_data():
             return jsonify({"success": False, "msg": "无有效数据"})
 
         with get_db_session() as db_session:
-            db_session.add_all(recs)
-            db_session.commit()
+            with db_write_lock:
+                db_session.add_all(recs)
+                db_session.commit()
 
         train_model_async()
         socketio.emit("update_pie")
@@ -1049,96 +1072,104 @@ def create_pdf_report(
     start: datetime,
     end: datetime,
 ):
-    def escape_pdf_text(text: str) -> str:
-        return (
-            text.replace("\\", "\\\\")
-            .replace("(", "\\(")
-            .replace(")", "\\)")
-        )
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-    def add_line(buffer: list[str], text: str) -> None:
-        safe = escape_pdf_text(text)
-        buffer.append(f"({safe}) Tj")
-        buffer.append("T*")
+    styles = getSampleStyleSheet()
+    heading_style = styles["Heading2"].clone("ChineseHeading")
+    heading_style.fontName = "STSong-Light"
+    heading_style.leading = 18
 
-    summary_lines: list[str] = []
-    summary_lines.append(
-        f"Report {start.strftime('%Y-%m-%d')} - {end.strftime('%Y-%m-%d')}"
+    body_style = styles["BodyText"].clone("ChineseBody")
+    body_style.fontName = "STSong-Light"
+    body_style.fontSize = 11
+    body_style.leading = 16
+
+    title_style = styles["Heading1"].clone("ChineseTitle")
+    title_style.fontName = "STSong-Light"
+    title_style.spaceAfter = 12
+
+    doc = SimpleDocTemplate(
+        str(path), pagesize=A4, leftMargin=36, rightMargin=36, topMargin=48, bottomMargin=36
     )
-    totals = summarize_totals(recs)
-    summary_lines.append(
-        f"Income: {totals['income']:.2f}  Expense: {totals['expense']:.2f}  Balance: {totals['balance']:.2f}"
-    )
-    summary_lines.append("Monthly summary:")
-    for row in monthly_rows:
-        summary_lines.append(
-            f" {row['月份']}: +{row['收入']:.2f} / -{row['支出']:.2f} = {row['结余']:.2f}"
-        )
 
-    if include_comparison and comparison_rows:
-        summary_lines.append("Yearly comparison:")
-        for row in comparison_rows:
-            summary_lines.append(
-                f" {row['期间']}: income {row['总收入']} | expense {row['总支出']} | balance {row['结余']}"
-            )
-
-    summary_lines.append("Top records:")
-    for r in sorted(recs, key=lambda x: x.ts, reverse=True)[:20]:
-        summary_lines.append(
-            f" {r.ts.strftime('%Y-%m-%d')}: {'IN' if r.type == 'income' else 'OUT'} {r.amount:.2f} [{r.category}] {r.note}"
-        )
-
-    content_lines = [
-        "BT",
-        "/F1 12 Tf",
-        "72 750 Td",
-        "12 TL",
+    elements = [
+        Paragraph("财务报表", title_style),
+        Paragraph(
+            f"周期：{start.strftime('%Y-%m-%d')} 至 {end.strftime('%Y-%m-%d')}",
+            body_style,
+        ),
     ]
-    for line in summary_lines:
-        add_line(content_lines, line)
-    content_lines.append("ET")
 
-    content_stream = "\n".join(content_lines).encode("latin-1", "replace")
-    objects = []
-
-    def add_object(content: bytes) -> int:
-        objects.append(content)
-        return len(objects)
-
-    add_object(b"<< /Type /Catalog /Pages 2 0 R >>")  # 1 0 obj
-    add_object(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")  # 2 0 obj
-    add_object(
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+    totals = summarize_totals(recs)
+    elements.append(
+        Paragraph(
+            f"总收入：{totals['income']:.2f}，总支出：{totals['expense']:.2f}，结余：{totals['balance']:.2f}",
+            body_style,
+        )
     )
+    elements.append(Spacer(1, 12))
 
-    add_object(
-        f"<< /Length {len(content_stream)} >>\nstream\n".encode()
-        + content_stream
-        + b"\nendstream"
-    )
-    add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    def render_table(title: str, data: list[list[str | float]]):
+        elements.append(Paragraph(title, heading_style))
+        table = Table(data, hAlign="LEFT")
+        table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.darkblue),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                ]
+            )
+        )
+        elements.append(table)
+        elements.append(Spacer(1, 12))
 
-    offsets = []
-    buffer = bytearray()
-    buffer.extend(b"%PDF-1.4\n")
-    for idx, obj in enumerate(objects, start=1):
-        offsets.append(len(buffer))
-        buffer.extend(f"{idx} 0 obj\n".encode())
-        buffer.extend(obj)
-        buffer.extend(b"\nendobj\n")
+    monthly_data = [["月份", "收入", "支出", "结余"]]
+    for row in monthly_rows:
+        monthly_data.append(
+            [
+                row["月份"],
+                f"{row['收入']:.2f}",
+                f"{row['支出']:.2f}",
+                f"{row['结余']:.2f}",
+            ]
+        )
+    render_table("月度汇总", monthly_data)
 
-    xref_pos = len(buffer)
-    buffer.extend(f"xref\n0 {len(objects)+1}\n".encode())
-    buffer.extend(b"0000000000 65535 f \n")
-    for off in offsets:
-        buffer.extend(f"{off:010d} 00000 n \n".encode())
+    if include_comparison:
+        comparison_data = [["期间", "总收入", "总支出", "结余", "同比收入差额", "同比支出差额"]]
+        for row in comparison_rows or []:
+            comparison_data.append(
+                [
+                    row["期间"],
+                    f"{row['总收入']:.2f}" if isinstance(row["总收入"], (int, float)) else row["总收入"],
+                    f"{row['总支出']:.2f}" if isinstance(row["总支出"], (int, float)) else row["总支出"],
+                    f"{row['结余']:.2f}" if isinstance(row["结余"], (int, float)) else row["结余"],
+                    row["同比收入差额"],
+                    row["同比支出差额"],
+                ]
+            )
+        render_table("年度对比", comparison_data)
 
-    buffer.extend(
-        b"trailer\n" + f"<< /Size {len(objects)+1} /Root 1 0 R >>\n".encode()
-    )
-    buffer.extend(f"startxref\n{xref_pos}\n%%EOF".encode())
+    top_records = sorted(recs, key=lambda x: x.ts, reverse=True)[:20]
+    record_data = [["日期", "类型", "金额", "类别", "备注"]]
+    for r in top_records:
+        record_data.append(
+            [
+                r.ts.strftime("%Y-%m-%d"),
+                "收入" if r.type == "income" else "支出",
+                f"{r.amount:.2f}",
+                r.category,
+                r.note,
+            ]
+        )
+    render_table("最近记录", record_data)
 
-    path.write_bytes(buffer)
+    doc.build(elements)
 
 
 @bp.post("/api/export_report")
