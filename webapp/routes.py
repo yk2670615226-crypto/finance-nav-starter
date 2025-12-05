@@ -571,33 +571,18 @@ def api_stats_category():
     start, end = get_month_range(target)
 
     with get_db_session() as db_session:
-        data = (
+        raw_data = (
             db_session.query(Record.category, func.sum(Record.amount))
             .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
             .group_by(Record.category)
             .all()
         )
-        total = (
-            db_session.query(func.sum(Record.amount))
-            .filter(Record.type == "expense", Record.ts >= start, Record.ts <= end)
-            .scalar()
-            or 0.0
-        )
 
-        cfg = get_settings(db_session)
-        bg = cfg.monthly_budget
+    pie_data = [
+        {"name": cat, "value": round(amount or 0.0, 2)} for cat, amount in raw_data
+    ]
 
-    st_text, st_cls = get_budget_status(total, bg)
-
-    return jsonify(
-        {
-            "display_spent": f"{total:.2f}",
-            "display_budget": f"{bg:.2f}" if bg > 0 else "/",
-            "status_text": st_text,
-            "status_class": st_cls,
-            "date_title": f"{target.year}年{target.month}月",
-        }
-    )
+    return jsonify(pie_data)
 
 
 @bp.route("/api/summary")
