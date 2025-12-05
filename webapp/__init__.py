@@ -56,6 +56,12 @@ def create_app() -> Flask:
                 record_cols = {c["name"] for c in inspector.get_columns("records")}
                 if "user_id" not in record_cols:
                     conn.execute(text("ALTER TABLE records ADD COLUMN user_id INTEGER"))
+                if "is_demo" not in record_cols:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE records ADD COLUMN is_demo BOOLEAN NOT NULL DEFAULT 0"
+                        )
+                    )
 
             if "app_settings" in existing_tables:
                 setting_cols = {c["name"] for c in inspector.get_columns("app_settings")}

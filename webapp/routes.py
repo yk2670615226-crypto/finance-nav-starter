@@ -163,6 +163,7 @@ def _generate_demo_data(
                 category=category,
                 note=note,
                 user_id=user_id,
+                is_demo=True,
             )
         )
 
@@ -537,8 +538,10 @@ def exit_demo():
         cfg = get_settings(db_session, g.user_id)
         if cfg.is_demo:
             with db_write_lock:
-                db_session.query(Record).filter(Record.user_id == g.user_id).delete(
-                    synchronize_session=False
+                (
+                    db_session.query(Record)
+                    .filter(Record.user_id == g.user_id, Record.is_demo.is_(True))
+                    .delete(synchronize_session=False)
                 )
                 cfg.is_demo = False
                 cfg.monthly_budget = 0
@@ -732,6 +735,7 @@ def records_new():
                     category=cat,
                     note=note,
                     user_id=g.user_id,
+                    is_demo=False,
                 )
             )
             db_session.commit()
@@ -1005,6 +1009,7 @@ def api_import_data():
                     category=row["category"],
                     note=row["note"],
                     user_id=g.user_id,
+                    is_demo=False,
                 )
             )
 
